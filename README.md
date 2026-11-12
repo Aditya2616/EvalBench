@@ -12,7 +12,7 @@ The `docs/` folder is a static site that replays a real recorded run (serve it w
 
 ## What the run found
 
-Everything below comes from one run of this repo on a CPU desktop: 120 prompts, 4 checkpoints, judge Qwen2.5-0.5B-Instruct. It is a small demo, not a benchmark. With 120 prompts the 95% intervals are roughly plus or minus 9 points, so most gaps between checkpoints are noise.
+Everything below comes from one run of this repo on a CPU desktop (all generation, both judges and the embeddings ran on the CPU in float32, so every checkpoint and both judges share one device and dtype): 120 prompts, 4 checkpoints, judge Qwen2.5-0.5B-Instruct. It is a small demo, not a benchmark. With 120 prompts the 95% intervals are roughly plus or minus 9 points, so most gaps between checkpoints are noise.
 
 Pass counts by task (a pass is a rule pass, or the judge saying "no misconception" on the truth items):
 
