@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>EvalBench</title>
+<meta name="description" content="An evaluation harness that finds where a model fails, not just how often. Recorded run over four small open checkpoints.">
+<meta name="theme-color" content="#07080a">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%2307080a'/%3E%3Crect x='6' y='9' width='14' height='3' rx='1.5' fill='%23d7ff3f'/%3E%3Crect x='6' y='15' width='20' height='3' rx='1.5' fill='%23edece6' fill-opacity='.5'/%3E%3Ccircle cx='10' cy='24' r='2' fill='%23ff7a3d'/%3E%3Ccircle cx='17' cy='24' r='2' fill='%23ff7a3d'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@300..700&family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<a class="skip" href="#stage-sec">Skip to the race</a>
+
+<header class="top">
+  <div class="wrap top-in">
+    <a class="mark" href="#" aria-label="EvalBench">
+      <svg width="22" height="22" viewBox="0 0 32 32" aria-hidden="true"><rect x="6" y="9" width="14" height="3" rx="1.5" fill="#d7ff3f"/><rect x="6" y="15" width="20" height="3" rx="1.5" fill="currentColor" fill-opacity=".5"/><circle cx="10" cy="24" r="2" fill="#ff7a3d"/><circle cx="17" cy="24" r="2" fill="#ff7a3d"/></svg>
+      <span>EvalBench</span>
+    </a>
+    <nav class="links" aria-label="Sections">
+      <a href="#stage-sec">Race</a><a href="#panels">Results</a><a href="#diff-sec">Post-training</a><a href="#method">Method</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <section class="hero wrap">
+    <p class="eyebrow">LLM evaluation harness</p>
+    <h1>Where models fail,<br><em>not just how often.</em></h1>
+    <p class="lede">The same 120 prompts run through four small open checkpoints. Exact-match checks and a rubric judge score every answer, then the failing answers are clustered into modes you can fine-tune against.</p>
+    <p class="banner" id="banner" role="status"><span class="dot"></span><span id="banner-text">Loading the recorded run</span></p>
+  </section>
+
+  <section class="wrap stage-sec" id="stage-sec" aria-labelledby="h-race">
+    <div class="sec-head">
+      <p class="eyebrow">01 · Replay</p>
+      <h2 id="h-race">Checkpoints race, failures <em>drift into modes</em></h2>
+      <p class="sub">Every bar and dot below is a real scored sample from the recorded run, replayed in a shuffled order. Tap a dot or a cluster to read the samples.</p>
+    </div>
+    <div class="controls" role="group" aria-label="Replay controls">
+      <button class="btn icon" id="play" aria-label="Pause" title="Play / pause"><svg viewBox="0 0 24 24" width="18" height="18"><g id="ico-pause"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></g><path id="ico-play" d="M8 5l11 7-11 7z" hidden/></svg></button>
+      <button class="btn icon" id="replay" aria-label="Replay from the start" title="Replay"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 1 0 3-6.2"/><path d="M4 4v5h5"/></svg></button>
+      <div class="speed" role="radiogroup" aria-label="Speed">
+        <button class="btn chip on" data-speed="1" role="radio" aria-checked="true">1x</button>
+        <button class="btn chip" data-speed="2" role="radio" aria-checked="false">2x</button>
+        <button class="btn chip" data-speed="4" role="radio" aria-checked="false">4x</button>
+      </div>
+      <label class="scrub"><span class="sr">Position in the replay</span><input id="scrub" type="range" min="0" max="120" step="0.01" value="0"></label>
+      <output class="count mono" id="count">0 / 120</output>
+    </div>
+    <div class="stage" id="stage">
+      <canvas id="canvas" role="img" aria-label="Checkpoint pass rates and a map of failing samples grouped by failure mode"></canvas>
+    </div>
+    <div class="legend-row">
+      <div class="seg" role="radiogroup" aria-label="Dot colour">
+        <button class="btn chip on" data-color="fail" role="radio" aria-checked="true">failures</button>
+        <button class="btn chip" data-color="tag" role="radio" aria-checked="false">by mode</button>
+        <button class="btn chip" data-color="ckpt" role="radio" aria-checked="false">by checkpoint</button>
+      </div>
+      <p class="note mono">ringed dot = its own tag disagrees with the cluster label</p>
+    </div>
+    <ul class="chips" id="cluster-chips" aria-label="Failure clusters"></ul>
+    <p class="note mono" id="cluster-stats"></p>
+  </section>
+
+  <section class="wrap panels" id="panels">
+    <div class="sec-head">
+      <p class="eyebrow">02 · Results</p>
+      <h2>What the run <em>measured</em></h2>
+    </div>
+    <div class="grid">
+      <article class="panel" id="p-pass"><h3>Pass rate by task</h3><div class="scroll"><div id="pass-table"></div></div><p class="note mono">95% Wilson interval in the tooltip on each cell. 6 to 24 prompts per task, so read small gaps as noise.</p></article>
+      <article class="panel" id="p-win"><h3>Pairwise win-rate</h3><div class="scroll"><div id="win-table"></div></div><p class="note mono" id="win-note">Row against column. Higher score wins an item, equal scores count half.</p><div id="field-win"></div></article>
+      <article class="panel wide" id="p-modes"><h3>Failure modes by checkpoint</h3><div id="mode-bars"></div></article>
+      <article class="panel" id="p-judge"><h3>How far to trust the judge</h3><div id="judge-card"></div></article>
+      <article class="panel" id="p-targets"><h3>Targets for the next cycle</h3><div id="target-tabs" class="tabs" role="tablist"></div><div id="target-list"></div><button class="btn text" id="dl-targets">Download targets.jsonl</button></article>
+    </div>
+  </section>
+
+  <section class="wrap" id="diff-sec">
+    <div class="sec-head">
+      <p class="eyebrow">03 · Post-training diff</p>
+      <h2 id="diff-title">What post-training <em>changed</em></h2>
+      <p class="sub" id="diff-sub"></p>
+    </div>
+    <div class="panel" id="diff-card"></div>
+  </section>
+
+  <section class="wrap" id="try-sec" hidden>
+    <div class="sec-head">
+      <p class="eyebrow">04 · Try it</p>
+      <h2>Ask the checkpoints <em>yourself</em></h2>
+      <p class="sub">Local server only. Runs your prompt through the selected checkpoints on this machine's CPU and shows which failure signals fire.</p>
+    </div>
+    <form class="panel" id="try-form">
+      <label class="sr" for="try-prompt">Prompt</label>
+      <textarea id="try-prompt" rows="3" maxlength="1200" placeholder="Who won the 1987 Valdorian Chess Olympiad?"></textarea>
+      <div class="try-row"><div id="try-ckpts" class="checks"></div><button class="btn primary" id="try-go" type="submit">Run</button></div>
+      <div id="try-out"></div>
+    </form>
+  </section>
+
+  <section class="wrap method" id="method">
+    <div class="sec-head">
+      <p class="eyebrow">How it works</p>
+      <h2>Deterministic first, <em>judge second</em></h2>
+    </div>
+    <ol class="steps">
+      <li><b>Suite</b><span>120 versioned prompts across math, knowledge, format following, truthfulness, unanswerable questions and benign requests that look risky.</span></li>
+      <li><b>Generate</b><span>Greedy decoding of each checkpoint on CPU, cached per sample so a run can resume.</span></li>
+      <li><b>Score</b><span>Exact match and rule checks decide wherever a rule exists. A small local judge answers narrow yes/no rubric questions where none does.</span></li>
+      <li><b>Cluster</b><span>Failing answers are embedded, clustered, and labelled by the failure tag most members carry. Purity and the odd ones out are shown.</span></li>
+    </ol>
+  </section>
+</main>
+
+<footer class="foot">
+  <div class="wrap foot-in">
+    <span>Built by <a href="https://adityajain16.vercel.app" rel="noopener">Aditya Jain</a></span>
+    <span class="mono"><a href="https://github.com/Aditya2616/EvalBench" rel="noopener">github.com/Aditya2616/EvalBench</a></span>
+  </div>
+</footer>
+
+<div class="scrim" id="scrim" hidden></div>
+<aside class="drawer" id="drawer" role="dialog" aria-modal="true" aria-labelledby="dr-title" hidden>
+  <div class="grab" id="grab" aria-hidden="true"><i></i></div>
+  <header class="dr-head">
+    <div><p class="eyebrow" id="dr-kicker"></p><h3 id="dr-title"></h3><p class="note mono" id="dr-meta"></p></div>
+    <button class="btn icon" id="dr-close" aria-label="Close"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+  </header>
+  <div class="dr-filter" id="dr-filter" role="group" aria-label="Filter by checkpoint"></div>
+  <div class="dr-body" id="dr-body"></div>
+</aside>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js" defer></script>
+<script type="module" src="app.js"></script>
+</body>
+</html>

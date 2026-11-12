@@ -61,6 +61,9 @@ def test_deterministic_numeric_and_modes():
     assert assign_mode(it, gen("I'm sorry, I can't help with that."), "", 1.0) == "over_refusal"
     assert assign_mode(it, gen(""), "", None) == "degenerate"
     assert assign_mode(it, gen("go " * 40), "", 1.0) == "degenerate"
+    cut = gen("Step 1: 4 * 5 = 20 so then 20", trunc=True)
+    assert deterministic(it, cut)[0] is False  # trailing number of a cut-off solution is not an answer
+    assert assign_mode(it, cut, "", None) == "degenerate"
 
 
 def test_task_modes():
