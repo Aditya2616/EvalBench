@@ -1,6 +1,6 @@
 # EvalBench research notes
 
-Phase 1 findings. Everything below marked "measured" was checked on this machine on 2026-11-12; the rest comes from the linked sources.
+Notes I made before building. Anything marked "measured" I checked myself on 2026-11-12; the rest comes from the linked sources.
 
 ## 1. The field
 
@@ -13,7 +13,7 @@ Phase 1 findings. Everything below marked "measured" was checked on this machine
 | [DeepEval](https://github.com/confident-ai/deepeval) (Apache-2.0) | pytest-style LLM tests, G-Eval rubric metric | Rubric-as-criteria prompt (G-Eval style) | Metrics default to hosted judges. |
 | [HELM](https://crfm.stanford.edu/helm/) (Stanford, Apache-2.0) | Holistic, many metrics per scenario, per-instance prompts and outputs released | Reporting several metrics per scenario, not one score; publishing per-instance data | Large scale; not designed for a fine-tuning loop on a laptop. |
 
-Gap EvalBench fills: these tools stop at "score per task". The portfolio promise is the next step, grouping the failing samples into modes so the next fine-tuning cycle has a target. Practitioner write-ups on error analysis ([Atla](https://www.atla-ai.com/post/automating-error-analysis), [Strick](https://alexstrick.com/posts/2025-05-23-error-analysis-to-find-failure-modes.html)) describe the same workflow by hand: read failures, label, cluster. Atla reports that embedding then non-parametric clustering gave more specific patterns than asking an LLM to cluster everything in one prompt, and scaled better. I will do that, with deterministic detectors supplying the labels so the modes are not an LLM's opinion. Taxonomy references: [ErrorAtlas](https://www.emergentmind.com/topics/erroratlas) (17 categories incl. inappropriate refusal; I only read a secondary summary), [system-level taxonomy of 15 failure modes](https://arxiv.org/pdf/2511.19933). A caution from [arXiv 2512.21422](https://arxiv.org/html/2512.21422v1): clustering regions of failure has not been shown to teach users reliably, so I must show real samples next to every cluster and not present labels as ground truth.
+EvalBench starts where these tools stop at "score per task". The next step I wanted is grouping the failing samples into modes so the next fine-tuning cycle has a target. Practitioner write-ups on error analysis ([Atla](https://www.atla-ai.com/post/automating-error-analysis), [Strick](https://alexstrick.com/posts/2025-05-23-error-analysis-to-find-failure-modes.html)) describe the same workflow by hand: read failures, label, cluster. Atla reports that embedding then non-parametric clustering gave more specific patterns than asking an LLM to cluster everything in one prompt, and scaled better. I will do that, with deterministic detectors supplying the labels so the modes are not an LLM's opinion. Taxonomy references: [ErrorAtlas](https://www.emergentmind.com/topics/erroratlas) (17 categories incl. inappropriate refusal; I only read a secondary summary), [system-level taxonomy of 15 failure modes](https://arxiv.org/pdf/2511.19933). A caution from [arXiv 2512.21422](https://arxiv.org/html/2512.21422v1): clustering regions of failure has not been shown to teach users reliably, so I must show real samples next to every cluster and not present labels as ground truth.
 
 ## 2. LLM-as-judge reliability (why the design is deterministic-first)
 
@@ -41,7 +41,7 @@ Rejected: Qwen2.5-3B-Instruct (licence is `other`, the Qwen research licence), G
 
 The ladder is deliberately a real post-training story: base 360M -> instruct 360M is the same architecture before and after post-training, and the sizes 135M / 360M / 500M show scale. Total download for the default set is about 2.8 GB, within the 3 GB budget.
 
-Measured CPU speed (torch 2.11 CPU, 4 threads, fp32, greedy, single prompt, includes warm-up, machine shared with other builds): SmolLM2-360M-Instruct 8.6 tok/s, Qwen2.5-0.5B-Instruct 8.7 tok/s. Batched generation will be faster per token. Estimate for the default run (4 checkpoints x ~120 prompts x <=96 new tokens) is on the order of an hour; I will record the real figure. Recorded runs are committed so nobody has to wait.
+Measured CPU speed (torch 2.11 CPU, 4 threads, fp32, greedy, single prompt, includes warm-up, on a busy desktop): SmolLM2-360M-Instruct 8.6 tok/s, Qwen2.5-0.5B-Instruct 8.7 tok/s. Batched generation will be faster per token. The real wall time of the full run is in the README. A recorded run is committed so nobody has to wait.
 
 ## 4. Datasets (licences read from the Hub API, measured)
 

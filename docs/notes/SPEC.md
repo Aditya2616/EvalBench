@@ -68,20 +68,20 @@ Fast: scorers (numeric extraction edge cases, constraint verifiers, lexicon), su
 
 ## 8. Done means
 
-- Real run on the default four checkpoints over the full suite on this machine; recorded under `runs/` (compact, committed) and exported to `docs/data/run.json`.
+- Real run on the default four checkpoints over the full suite; recorded under `runs/` (compact, committed) and exported to `docs/data/run.json`.
 - README numbers (pass rates, CIs, win-rates, cluster purity, judge kappa, wall time) all from that run, reproduced by `scripts/reproduce.sh`.
 - Fresh-clone quickstart works in a clean venv; pytest and ruff pass; UI screenshots reviewed; static `docs/` works via `python -m http.server`.
 - README states plainly: 120-item suite, sub-1B models, small judge with measured unreliability, which paths were run for real (local models) vs stub-tested (OpenAI/Anthropic adapters).
 
 ## 9. Risks
 
-- CPU time and a shared machine: mitigate with batching, caching, max 96 new tokens, resumable runs.
+- CPU time: mitigate with batching, caching, max 96 new tokens, resumable runs.
 - 0.5B judge is weak: mitigated by deterministic-first design and reporting calibration honestly; may find judge adds little, which is itself a reported result.
 - Small models fail almost everything on GSM8K, flattening the race: choose item difficulty so pass rates spread (check after a pilot of 20 items per task, adjust sampling, document).
 - Cluster labels may not align with detector tags: report purity; do not tune until it looks good.
 - Disk: ~2.8 GB models, no symlinks on Windows cache.
 
-## 10. Decisions needed
+## 10. Open decisions (resolved while building, see the README)
 
-1. Download budget: OK with ~2.8 GB default, and optionally +3.1 GB for Qwen2.5-1.5B as stronger judge (default off)?
-2. Is an hour-ish of CPU for the full run acceptable while other builds share the machine?
+1. Download budget: about 2.8 GB for the four checkpoints, plus 3.1 GB for Qwen2.5-1.5B as an optional stronger judge.
+2. Roughly an hour of CPU for the full run, resumable.

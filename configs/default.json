@@ -1,6 +1,6 @@
 {
   "suite": "data/suite.jsonl",
-  "judge": "local:Qwen/Qwen2.5-1.5B-Instruct",
+  "judge": "local:Qwen/Qwen2.5-0.5B-Instruct",
   "diff": ["smollm2-360m-base", "smollm2-360m-it"],
   "checkpoints": [
     {"name": "smollm2-135m-it", "model": "HuggingFaceTB/SmolLM2-135M-Instruct", "style": "chat", "note": "135M, instruction tuned"},

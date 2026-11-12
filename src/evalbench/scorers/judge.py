@@ -193,7 +193,7 @@ class StubJudge:
 
 def make_judge(spec: str | None = None, client: httpx.Client | None = None) -> Judge:
     """spec: 'local:<hf-id>' | 'openai:<model>' | 'anthropic:<model>' | 'stub'. Defaults to EVALBENCH_JUDGE."""
-    spec = spec or os.environ.get("EVALBENCH_JUDGE") or "local:Qwen/Qwen2.5-1.5B-Instruct"
+    spec = spec or os.environ.get("EVALBENCH_JUDGE") or "local:Qwen/Qwen2.5-0.5B-Instruct"
     kind, _, rest = spec.partition(":")
     if kind == "stub":
         return StubJudge()
