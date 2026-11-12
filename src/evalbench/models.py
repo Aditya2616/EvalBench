@@ -70,10 +70,11 @@ class HFRunner:
             i += len(batch)
             enc = self.tok([self._render(x) for x in batch], return_tensors="pt", padding=True)
             t0 = time.time()
+            extra = {"stop_strings": list(STOP_PLAIN), "tokenizer": self.tok} if self.ckpt.style == "plain" else {}
             with torch.no_grad():
                 ids = self.model.generate(
                     **enc, max_new_tokens=budget, do_sample=False, pad_token_id=self.tok.pad_token_id,
-                    temperature=None, top_p=None, top_k=None,
+                    temperature=None, top_p=None, top_k=None, **extra,
                 )
             dt = (time.time() - t0) / len(batch)
             plen = enc["input_ids"].shape[1]
@@ -82,10 +83,13 @@ class HFRunner:
                 eos_pos = (new == self.tok.eos_token_id).nonzero()
                 n_new = int(eos_pos[0]) if len(eos_pos) else len(new)
                 trunc = len(eos_pos) == 0
-                text = self.tok.decode(new[:n_new], skip_special_tokens=True)
+                raw = self.tok.decode(new[:n_new], skip_special_tokens=True)
+                text = cut_at_stop(raw, self.ckpt.style)
+                if text != raw.strip():  # a stop sequence ended the answer, so it did not run to the cap
+                    trunc = False
                 out.append(
                     Generation(
-                        ckpt=self.ckpt.name, item_id=x.id, text=cut_at_stop(text, self.ckpt.style),
+                        ckpt=self.ckpt.name, item_id=x.id, text=text,
                         new_tokens=n_new, truncated=trunc and n_new >= budget, seconds=round(dt, 3),
                     )
                 )
