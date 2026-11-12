@@ -28,7 +28,33 @@ def test_clusters_recover_planted_modes():
     assert {c["label"] for c in out["clusters"]} == set(PLANTS)
     assert sum(c["size"] for c in out["clusters"]) == len(verdicts)
     assert all(-1.01 <= p["x"] <= 1.01 and -1.01 <= p["y"] <= 1.01 for p in out["points"])
+    assert all(-1.01 <= p["wx"] <= 1.01 and -1.01 <= p["wy"] <= 1.01 for p in out["points"])
     assert not any(p["mislabelled"] for p in out["points"])
+
+
+def test_one_island_per_mode_and_islands_do_not_overlap():
+    items, gens, verdicts = make()
+    out = cluster_failures(items, gens, verdicts, embed=fake_embed, k_range=(2, 6))
+    assert sorted(i["mode"] for i in out["islands"]) == sorted(PLANTS)
+    for key in ("", "w"):
+        isl = out["islands"]
+        for a in range(len(isl)):
+            for b in range(a + 1, len(isl)):
+                d = ((isl[a][key + "x"] - isl[b][key + "x"]) ** 2 + (isl[a][key + "y"] - isl[b][key + "y"]) ** 2) ** 0.5
+                assert d >= isl[a][key + "r"] + isl[b][key + "r"] - 1e-6
+
+
+def test_both_representations_are_reported_and_points_stay_in_their_island():
+    items, gens, verdicts = make()
+    out = cluster_failures(items, gens, verdicts, embed=fake_embed, k_range=(2, 6))
+    reps = out["stats"]["representations"]
+    assert set(reps) == {"plain", "task_centred"} and out["stats"]["chosen"] in reps
+    by_sub = {c["id"]: c for c in out["clusters"]}
+    isl = {i["mode"]: i for i in out["islands"]}
+    for p in out["points"]:
+        i, c = isl[p["mode"]], by_sub[p["cluster"]]
+        assert c["label"] == p["mode"]
+        assert ((p["x"] - i["x"]) ** 2 + (p["y"] - i["y"]) ** 2) ** 0.5 <= i["r"] + 1e-6
 
 
 def test_mislabelled_members_are_reported():
