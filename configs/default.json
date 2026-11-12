@@ -1,0 +1,11 @@
+{
+  "suite": "data/suite.jsonl",
+  "judge": "local:Qwen/Qwen2.5-1.5B-Instruct",
+  "diff": ["smollm2-360m-base", "smollm2-360m-it"],
+  "checkpoints": [
+    {"name": "smollm2-135m-it", "model": "HuggingFaceTB/SmolLM2-135M-Instruct", "style": "chat", "note": "135M, instruction tuned"},
+    {"name": "smollm2-360m-base", "model": "HuggingFaceTB/SmolLM2-360M", "style": "plain", "note": "360M, before post-training"},
+    {"name": "smollm2-360m-it", "model": "HuggingFaceTB/SmolLM2-360M-Instruct", "style": "chat", "note": "360M, after SFT and DPO"},
+    {"name": "qwen2.5-0.5b-it", "model": "Qwen/Qwen2.5-0.5B-Instruct", "style": "chat", "note": "500M, different family"}
+  ]
+}

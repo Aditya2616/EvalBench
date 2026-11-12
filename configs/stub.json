@@ -1,0 +1,10 @@
+{
+  "suite": "data/suite.jsonl",
+  "judge": "stub",
+  "diff": ["stub-a", "stub-c"],
+  "checkpoints": [
+    {"name": "stub-a", "model": "stub:25", "backend": "stub"},
+    {"name": "stub-b", "model": "stub:50", "backend": "stub"},
+    {"name": "stub-c", "model": "stub:70", "backend": "stub"}
+  ]
+}
