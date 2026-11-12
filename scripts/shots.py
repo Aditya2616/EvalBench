@@ -62,7 +62,6 @@ def run(url: str, out: Path, tag: str = "") -> dict:
             page.locator("#diff-sec").scroll_into_view_if_needed()
             page.wait_for_timeout(500)
             page.screenshot(path=str(out / f"{tag}{name}-6-diff.png"))
-            page.screenshot(path=str(out / f"{tag}{name}-full.png"), full_page=True)
             report[f"{name}_overflow_x"] = page.evaluate("document.documentElement.scrollWidth - window.innerWidth")
             small = page.evaluate(
                 "[...document.querySelectorAll('button,input[type=range],a.mark,.links a,.checks label')]"

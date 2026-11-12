@@ -94,8 +94,22 @@ const Stage = (() => {
       const m = D.clusters.points.filter((p) => p.cluster === cl.id).map(proj);
       const mx = m.reduce((a, q) => a + q[0], 0) / m.length, my = m.reduce((a, q) => a + q[1], 0) / m.length;
       const sx = Math.sqrt(m.reduce((a, q) => a + (q[0] - mx) ** 2, 0) / m.length), sy = Math.sqrt(m.reduce((a, q) => a + (q[1] - my) ** 2, 0) / m.length);
-      return { cl, x: mx, y: my, rx: Math.max(18, sx * 2.1 + 8), ry: Math.max(15, sy * 2.1 + 8) };
+      return { cl, x: mx, y: my, rx: Math.max(18, sx * 1.7 + 8), ry: Math.max(15, sy * 1.7 + 8) };
     });
+    // label positions: start above each ellipse, then push overlapping labels apart so every name stays readable
+    const lpx = W < 560 ? 9 : 10.5, minY = mapTop + 22, maxY = my1 - 6;
+    L.lab = L.ell.map((e) => ({ e, w: e.cl.name.length * lpx * 0.62 + 6, x: clamp(e.x, 52, W - 52), y: clamp(e.y - e.ry - 14, minY, maxY) }));
+    for (let it = 0; it < 60; it++) {
+      let moved = false;
+      for (let i = 0; i < L.lab.length; i++) for (let j = i + 1; j < L.lab.length; j++) {
+        const a = L.lab[i], b = L.lab[j], ox = (a.w + b.w) / 2 - Math.abs(a.x - b.x), oy = 2 * lpx + 8 - Math.abs(a.y - b.y);
+        if (ox > 0 && oy > 0) {
+          const up = a.y <= b.y ? -1 : 1, d = oy / 2 + 0.5;
+          a.y = clamp(a.y + up * d, minY, maxY); b.y = clamp(b.y - up * d, minY, maxY); moved = true;
+        }
+      }
+      if (!moved) break;
+    }
     dirty = true;
   }
 
@@ -157,13 +171,14 @@ const Stage = (() => {
     // landed counts per cluster
     const landed = new Map();
     for (const d of DOTS) if (t >= d.spawn + FLIGHT) landed.set(d.p.cluster, (landed.get(d.p.cluster) || 0) + 1);
-    L.ell.forEach((e) => {
+    L.ell.forEach((e, k) => {
       const n = landed.get(e.cl.id) || 0, a = clamp(n / Math.max(4, e.cl.size * 0.5));
       ctx.strokeStyle = `rgba(255,122,61,${0.18 + 0.45 * a})`; ctx.setLineDash([3, 4]); ctx.lineWidth = 1;
       ctx.beginPath(); ctx.ellipse(e.x, e.y, e.rx, e.ry, 0, 0, 7); ctx.stroke(); ctx.setLineDash([]);
       const px = W < 560 ? 9 : 10.5;
       ctx.font = mono(px, 500); ctx.textAlign = 'center';
-      const lx = clamp(e.x, 52, W - 52), ly = Math.max(L.mapTop + 22, e.y - e.ry - 14);
+      const lx = L.lab[k].x, ly = L.lab[k].y;
+      ctx.lineJoin = 'round'; ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(11,12,15,.92)'; ctx.strokeText(e.cl.name, lx, ly); ctx.strokeText(String(n), lx, ly + px + 3);
       ctx.fillStyle = `rgba(237,236,230,${0.45 + 0.4 * a})`; ctx.fillText(e.cl.name, lx, ly);
       ctx.fillStyle = `rgba(255,122,61,${0.55 + 0.45 * a})`; ctx.font = mono(px + 1, 600); ctx.fillText(String(n), lx, ly + px + 3);
     });
