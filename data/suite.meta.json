@@ -1,0 +1,14 @@
+{
+ "version": "2.0",
+ "hash": "9eab83ef8bbf",
+ "seed": 2616,
+ "n": 408,
+ "per_task": {
+  "math": 84,
+  "knowledge": 84,
+  "format": 84,
+  "truth": 60,
+  "unanswerable": 48,
+  "benign": 48
+ }
+}
