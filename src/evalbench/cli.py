@@ -9,8 +9,8 @@ import sys
 from pathlib import Path
 
 from . import report
-from .runner import _read_jsonl, load_config, run_all, score_run
-from .schema import Generation, Verdict, load_suite
+from .runner import generate_all, load_config, run_all, score_cached
+from .schema import Verdict, load_suite
 
 
 def _load_run(path: str):
@@ -31,20 +31,18 @@ def cmd_run(a: argparse.Namespace) -> None:
 
 def cmd_calibrate(a: argparse.Namespace) -> None:
     """Score the recorded generations with each candidate judge and compare it with the deterministic labels."""
-    from .scorers.judge import make_judge
-
     cfg = load_config(a.config)
     items = load_suite(cfg["suite"])
-    gens = _read_jsonl(Path(a.run) / "generations.jsonl", Generation)
+    run_dir = Path(a.run)
+    gens = generate_all(items, cfg["checkpoints"], run_dir, print)
     res = {}
     for spec in a.judges:
-        j = make_judge(spec)
-        verdicts, pairs = score_run(items, gens, j)
+        verdicts, pairs, _ = score_cached(run_dir, items, gens, spec)
         res[spec] = report.judge_stats(verdicts, pairs)
         print(spec, json.dumps(res[spec], indent=1))
     best = max(res, key=lambda s: res[s].get("strict", {}).get("kappa", -1))
     out = {"judges": res, "best_by_strict_kappa": best}
-    (Path(a.run) / "judge_calibration.json").write_text(json.dumps(out, indent=1), encoding="utf-8")
+    (run_dir / "judge_calibration.json").write_text(json.dumps(out, indent=1), encoding="utf-8")
     print("best judge by kappa on exact-match labels:", best)
 
 

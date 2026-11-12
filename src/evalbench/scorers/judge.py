@@ -71,14 +71,15 @@ class LocalJudge:
     def _two_way(self, prompts: list[str], pos: list[str], neg: list[str]) -> list[float]:
         torch = self.torch
         pid, nid = self._ids(pos), self._ids(neg)
-        res: list[float] = []
-        for i in range(0, len(prompts), self.batch_size):
+        order = sorted(range(len(prompts)), key=lambda i: len(prompts[i]))  # similar lengths batch together
+        res_sorted: list[float] = []
+        for i in range(0, len(order), self.batch_size):
             texts = [
                 self.tok.apply_chat_template(
-                    [{"role": "system", "content": SYSTEM}, {"role": "user", "content": p}],
+                    [{"role": "system", "content": SYSTEM}, {"role": "user", "content": prompts[j]}],
                     add_generation_prompt=True, tokenize=False,
                 )
-                for p in prompts[i : i + self.batch_size]
+                for j in order[i : i + self.batch_size]
             ]
             enc = self.tok(texts, return_tensors="pt", padding=True)
             with torch.no_grad():
@@ -86,7 +87,10 @@ class LocalJudge:
             lp = torch.log_softmax(logits, dim=-1)
             yes = torch.logsumexp(lp[:, pid], dim=-1)
             no = torch.logsumexp(lp[:, nid], dim=-1)
-            res += torch.sigmoid(yes - no).tolist()
+            res_sorted += torch.sigmoid(yes - no).tolist()
+        res = [0.0] * len(prompts)
+        for pos_i, j in enumerate(order):
+            res[j] = res_sorted[pos_i]
         return res
 
     def p_yes(self, prompts: list[str]) -> list[float]:

@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import random
+import re
 import subprocess
 import time
 from collections.abc import Callable
@@ -41,7 +43,7 @@ def generate_all(items: list[Item], ckpts: list[Checkpoint], run_dir: Path, log:
     out: list[Generation] = []
     for ck in ckpts:
         path = gdir / f"{ck.name}.jsonl"
-        done = _read_jsonl(path, Generation)
+        done = list({g.item_id: g for g in reversed(_read_jsonl(path, Generation))}.values())[::-1]  # first write wins
         out += done
         if only and ck.name not in only:
             continue
@@ -71,6 +73,30 @@ def _git_commit() -> str:
         return subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True, timeout=5).stdout.strip()
     except Exception:
         return ""
+
+
+def gens_key(items: list[Item], gens: list[Generation]) -> str:
+    blob = suite_hash(items) + "\n" + "\n".join(sorted(f"{g.ckpt}|{g.item_id}|{g.text}" for g in gens))
+    return hashlib.sha256(blob.encode()).hexdigest()[:16]
+
+
+def score_cached(run_dir: Path, items: list[Item], gens: list[Generation], spec: str, log: Log = print):
+    """Score with a judge, reusing earlier judge outputs for the same generations (judging is the slow part)."""
+    path = run_dir / "judge_cache" / (re.sub(r"\W+", "_", spec) + ".json")
+    key = gens_key(items, gens)
+    if path.exists():
+        c = json.loads(path.read_text(encoding="utf-8"))
+        if c["key"] == key:
+            log(f"judge {spec}: using cached judgements")
+            return [Verdict.model_validate(v) for v in c["verdicts"]], c["pairs"], c["judge"]
+    judge = make_judge(spec)
+    log(f"judge {spec}: scoring {len(gens)} generations")
+    t0 = time.time()
+    verdicts, pairs = score_run(items, gens, judge)
+    log(f"judge {spec}: done in {time.time() - t0:.0f}s")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"key": key, "judge": judge.name, "verdicts": [v.model_dump() for v in verdicts], "pairs": pairs}), encoding="utf-8")
+    return verdicts, pairs, judge.name
 
 
 def score_run(items: list[Item], gens: list[Generation], judge: Judge | None) -> tuple[list[Verdict], list[dict]]:
@@ -129,10 +155,8 @@ def run_all(config: dict[str, Any], run_dir: str | Path, judge_spec: str | None 
     gens = generate_all(items, ckpts, run_dir, log, only=only)
     if only:
         return {}
-    judge = make_judge(judge_spec or config.get("judge"))
-    log(f"scoring with judge {judge.name}")
-    verdicts, pairs = score_run(items, gens, judge)
-    data = build_run_json(items, ckpts, gens, verdicts, pairs, judge.name, embed=embed, diff_pair=config.get("diff"))
+    verdicts, pairs, judge_name = score_cached(run_dir, items, gens, judge_spec or config["judge"], log)
+    data = build_run_json(items, ckpts, gens, verdicts, pairs, judge_name, embed=embed, diff_pair=config.get("diff"))
     (run_dir / "verdicts.jsonl").write_text("\n".join(v.model_dump_json() for v in verdicts), encoding="utf-8")
     (run_dir / "run.json").write_text(json.dumps(data, separators=(",", ":")), encoding="utf-8")
     log(f"wrote {run_dir / 'run.json'}")

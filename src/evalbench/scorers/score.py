@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import random
 import re
 
 from ..schema import Generation, Item, Verdict
@@ -93,7 +94,8 @@ def score_generations(
     return out
 
 
-def judge_pairs(items: list[Item], gens: list[Generation], verdicts: list[Verdict], judge: Judge) -> list[dict]:
+def judge_pairs(items: list[Item], gens: list[Generation], verdicts: list[Verdict], judge: Judge,
+                max_pairs: int = 60, seed: int = 5) -> list[dict]:
     """Pairwise judging in both orders on pairs where the deterministic scores differ.
 
     The higher deterministic score is the gold winner, so this measures the judge's accuracy and
@@ -102,18 +104,21 @@ def judge_pairs(items: list[Item], gens: list[Generation], verdicts: list[Verdic
     g = {(x.ckpt, x.item_id): x for x in gens}
     v = {(x.ckpt, x.item_id): x for x in verdicts}
     ckpts = sorted({x.ckpt for x in gens})
-    rows, prompts = [], []
+    cand = []
     for it in items:
         if it.task not in ("math", "knowledge", "format"):
             continue
         for a in ckpts:
             for b in ckpts:
                 if a < b and (a, it.id) in v and (b, it.id) in v and v[(a, it.id)].score != v[(b, it.id)].score:
-                    win = a if v[(a, it.id)].score > v[(b, it.id)].score else b
-                    rows.append({"item": it.id, "a": a, "b": b, "gold": win})
-                    pa, pb = g[(a, it.id)].text, g[(b, it.id)].text
-                    prompts.append(pair_prompt(by_item[it.id].prompt, pa, pb))
-                    prompts.append(pair_prompt(by_item[it.id].prompt, pb, pa))
+                    cand.append((it.id, a, b))
+    random.Random(seed).shuffle(cand)  # a seeded sample keeps the judge cost bounded
+    rows, prompts = [], []
+    for iid, a, b in sorted(cand[:max_pairs]):
+        win = a if v[(a, iid)].score > v[(b, iid)].score else b
+        rows.append({"item": iid, "a": a, "b": b, "gold": win})
+        prompts.append(pair_prompt(by_item[iid].prompt, g[(a, iid)].text, g[(b, iid)].text))
+        prompts.append(pair_prompt(by_item[iid].prompt, g[(b, iid)].text, g[(a, iid)].text))
     if not prompts:
         return []
     ps = judge.p_first(prompts)
