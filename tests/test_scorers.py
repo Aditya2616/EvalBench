@@ -63,7 +63,7 @@ def test_deterministic_numeric_and_modes():
     assert assign_mode(it, gen("go " * 40), "", 1.0) == "degenerate"
     cut = gen("Step 1: 4 * 5 = 20 so then 20", trunc=True)
     assert deterministic(it, cut)[0] is False  # trailing number of a cut-off solution is not an answer
-    assert assign_mode(it, cut, "", None) == "degenerate"
+    assert assign_mode(it, cut, "", None) == "format_break"  # cut off with no final answer; the cap hit is reported separately, not as degenerate
 
 
 def test_task_modes():
@@ -92,3 +92,11 @@ def test_truth_decided_by_judge():
     v = score_generations([it], [gen("good answer", "t"), gen("wrong answer", "t")], J())
     assert [x.passed for x in v] == [True, False]
     assert v[0].scorer == "judge" and v[1].mode == "hallucination"
+
+
+def test_hitting_the_cap_is_not_degenerate_but_gibberish_and_loops_are():
+    it = Item(id="u1", task="unanswerable", prompt="p", checker="abstain")
+    cut = Generation(ckpt="c", item_id="u1", text="It was a famous work by the author in the year", new_tokens=9, truncated=True, seconds=0.1)
+    assert assign_mode(it, cut, "", None) == "hallucination"
+    junk = Generation(ckpt="c", item_id="u1", text="中文汉字" * 8, new_tokens=9, truncated=False, seconds=0.1)
+    assert assign_mode(it, junk, "", None) == "degenerate"

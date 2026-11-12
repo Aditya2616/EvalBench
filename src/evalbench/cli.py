@@ -61,10 +61,19 @@ def cmd_report(a: argparse.Namespace) -> None:
     print("\nfailure modes (counts)")
     for c in names:
         print(f"  {c:<20} " + "  ".join(f"{m}={n}" for m, n in d["mode_table"][c].items()))
+    print("\ncap-hit rate (generation ran to its token limit)")
+    for c in names:
+        h = d["meta"]["cap_hits"][c]
+        print(f"  {c:<20} {h['hits']:>3}/{h['n']:<3} {h['rate']*100:4.1f}%  of which loops {h['loops']}, budget only {h['budget_only']} ({h['budget_rate']*100:.1f}%)")
     st = d["clusters"].get("stats", {})
-    print("\nclusters:", json.dumps(st))
-    for cl in d["clusters"].get("clusters", []):
-        print(f"  {cl['name']:<18} n={cl['size']:<3} purity={cl['purity']:.2f} terms={cl['terms']}")
+    print("\nclustering of failures (k by silhouette; purity and AMI against the detector modes)")
+    for name, r in st.get("representations", {}).items():
+        mark = "  <- used" if name == st.get("chosen") else ""
+        print(f"  {name:<13} k={r['k']:<2} silhouette={r['silhouette']:.3f} purity={r['purity']:.3f} "
+              f"AMI(mode)={r['ami_vs_mode']:.3f} AMI(task)={r['ami_vs_task']:.3f} disagree={r['mislabelled']}{mark}")
+    for isl in d["clusters"].get("islands", []):
+        subs = [c for c in d["clusters"]["clusters"] if c["id"] in isl["subs"]]
+        print(f"  {isl['mode']:<14} n={isl['n']:<3} disagree={isl['disagree']:<3} " + " | ".join(f"{c['name']} ({c['size']})" for c in subs))
 
 
 def cmd_diff(a: argparse.Namespace) -> None:

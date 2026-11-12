@@ -57,3 +57,14 @@ def test_targets_rank_by_count():
     vs = [v("a", "1", 0, mode="wrong_answer"), v("a", "2", 0, mode="wrong_answer"), v("a", "3", 0, mode="format_break")]
     t = report.targets(vs)
     assert t["a"][0]["mode"] == "wrong_answer" and t["a"][0]["count"] == 2
+
+
+def test_cap_hits_are_counted_per_checkpoint_and_task():
+    from evalbench.schema import Generation
+
+    def g(c, i, t):
+        return Generation(ckpt=c, item_id=i, text="x", new_tokens=5, truncated=t, seconds=0.1)
+
+    out = report.cap_hits([g("a", "m1", True), g("a", "k1", False), g("b", "m1", False)], {"m1": "math", "k1": "knowledge"})
+    assert out["a"]["hits"] == 1 and out["a"]["n"] == 2 and out["a"]["rate"] == 0.5
+    assert out["a"]["by_task"]["math"] == {"n": 1, "hits": 1} and out["b"]["hits"] == 0

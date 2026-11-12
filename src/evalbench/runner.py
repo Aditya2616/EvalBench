@@ -35,7 +35,7 @@ def _read_jsonl(path: Path, model):
 
 
 def generate_all(items: list[Item], ckpts: list[Checkpoint], run_dir: Path, log: Log = print,
-                 only: list[str] | None = None, batch_size: int = 12) -> list[Generation]:
+                 only: list[str] | None = None, batch_size: int | None = None) -> list[Generation]:
     """Generate for every checkpoint. Each checkpoint appends to its own file under generations/,
     so a stopped run resumes where it left off and checkpoints can be generated in parallel processes."""
     gdir = run_dir / "generations"
@@ -53,10 +53,18 @@ def generate_all(items: list[Item], ckpts: list[Checkpoint], run_dir: Path, log:
             log(f"{ck.name}: all {len(items)} cached")
             continue
         log(f"{ck.name}: generating {len(todo)} of {len(items)}")
-        kw = {"batch_size": batch_size} if ck.backend == "hf" else {}
+        kw = {"batch_size": batch_size} if ck.backend == "hf" and batch_size else {}
         runner = make_runner(ck, **kw)
+        meta_path = gdir / f"{ck.name}.meta.json"
+        prev = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.exists() else {}
+        if have and prev and (prev.get("device"), prev.get("dtype")) != (runner.info["device"], runner.info["dtype"]):
+            raise RuntimeError(
+                f"{ck.name}: earlier generations used {prev.get('device')}/{prev.get('dtype')}, this process uses "
+                f"{runner.info['device']}/{runner.info['dtype']}. Mixing devices in one run is not allowed; delete "
+                f"generations/{ck.name}.jsonl to start again."
+            )
         t0 = time.time()
-        step = max(batch_size, 6)
+        step = 48
         for n in range(0, len(todo), step):
             chunk = runner.generate(todo[n : n + step])
             with open(path, "a", encoding="utf-8") as f:
@@ -64,13 +72,20 @@ def generate_all(items: list[Item], ckpts: list[Checkpoint], run_dir: Path, log:
                     f.write(g.model_dump_json() + "\n")
             out += chunk
             log(f"  {ck.name} {min(n + step, len(todo))}/{len(todo)} ({time.time() - t0:.0f}s)")
+        meta = dict(prev)
+        meta.update(runner.info)
+        meta["generated"] = meta.get("generated", 0) + len(todo)
+        meta_path.write_text(json.dumps(meta, indent=1), encoding="utf-8")
         del runner
     return out
 
 
 def _git_commit() -> str:
     try:
-        return subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True, timeout=5).stdout.strip()
+        head = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True, timeout=5).stdout.strip()
+        dirty = subprocess.run(["git", "status", "--porcelain", "--", "src", "web", "configs", "data"], capture_output=True,
+                               text=True, timeout=5).stdout.strip()
+        return head + ("+dirty" if dirty else "")
     except Exception:
         return ""
 
@@ -95,7 +110,7 @@ def score_cached(run_dir: Path, items: list[Item], gens: list[Generation], spec:
     verdicts, pairs = score_run(items, gens, judge)
     log(f"judge {spec}: done in {time.time() - t0:.0f}s")
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"key": key, "judge": judge.name, "verdicts": [v.model_dump() for v in verdicts], "pairs": pairs}), encoding="utf-8")
+    path.write_text(json.dumps({"key": key, "judge": judge.name, "info": getattr(judge, "info", {}), "verdicts": [v.model_dump() for v in verdicts], "pairs": pairs}), encoding="utf-8")
     return verdicts, pairs, judge.name
 
 
@@ -107,7 +122,7 @@ def score_run(items: list[Item], gens: list[Generation], judge: Judge | None) ->
 
 def build_run_json(items: list[Item], ckpts: list[Checkpoint], gens: list[Generation], verdicts: list[Verdict],
                    pairs: list[dict], judge_name: str, embed: EmbedFn = minilm_embed, seed: int = 2616,
-                   diff_pair: list[str] | None = None) -> dict[str, Any]:
+                   diff_pair: list[str] | None = None, devices: dict[str, Any] | None = None) -> dict[str, Any]:
     names = [c.name for c in ckpts]
     gi = {(g.ckpt, g.item_id): g for g in gens}
     clusters = cluster_failures(items, gens, verdicts, embed=embed)
@@ -128,7 +143,9 @@ def build_run_json(items: list[Item], ckpts: list[Checkpoint], gens: list[Genera
         "meta": {
             "version": __version__, "suite_hash": suite_hash(items), "n_items": len(items), "judge": judge_name,
             "commit": _git_commit(), "created": time.strftime("%Y-%m-%d"),
-            "checkpoints": [c.model_dump() for c in ckpts],
+            "checkpoints": [c.model_dump() for c in ckpts], "devices": devices or {},
+            "cap_hits": report.cap_hits(gens, {i.id: i.task for i in items}),
+            "suite_version": suite_version(items),
             "seconds_per_item": {c: round(sum(g.seconds for g in gens if g.ckpt == c) / max(1, sum(g.ckpt == c for g in gens)), 2) for c in names},
         },
         "items": {i.id: {"task": i.task, "prompt": i.prompt, "gold": i.gold, "source": i.source, "license": i.license,
@@ -146,6 +163,21 @@ def build_run_json(items: list[Item], ckpts: list[Checkpoint], gens: list[Genera
     }
 
 
+def suite_version(items: list[Item]) -> str:
+    from .suite.build import SUITE_VERSION
+
+    return SUITE_VERSION
+
+
+def read_devices(run_dir: Path) -> dict[str, Any]:
+    out = {p.name.removesuffix(".meta.json"): json.loads(p.read_text(encoding="utf-8"))
+           for p in sorted((run_dir / "generations").glob("*.meta.json"))}
+    for p in sorted((run_dir / "judge_cache").glob("*.json")):
+        c = json.loads(p.read_text(encoding="utf-8"))
+        out["judge:" + c["judge"]] = c.get("info", {})
+    return out
+
+
 def run_all(config: dict[str, Any], run_dir: str | Path, judge_spec: str | None = None, log: Log = print,
             embed: EmbedFn = minilm_embed, only: list[str] | None = None) -> dict[str, Any]:
     run_dir = Path(run_dir)
@@ -156,7 +188,11 @@ def run_all(config: dict[str, Any], run_dir: str | Path, judge_spec: str | None 
     if only:
         return {}
     verdicts, pairs, judge_name = score_cached(run_dir, items, gens, judge_spec or config["judge"], log)
-    data = build_run_json(items, ckpts, gens, verdicts, pairs, judge_name, embed=embed, diff_pair=config.get("diff"))
+    data = build_run_json(items, ckpts, gens, verdicts, pairs, judge_name, embed=embed, diff_pair=config.get("diff"),
+                          devices=read_devices(run_dir))
+    cal = run_dir / "judge_calibration.json"
+    if cal.exists():
+        data["judge_comparison"] = json.loads(cal.read_text(encoding="utf-8"))
     (run_dir / "verdicts.jsonl").write_text("\n".join(v.model_dump_json() for v in verdicts), encoding="utf-8")
     (run_dir / "run.json").write_text(json.dumps(data, separators=(",", ":")), encoding="utf-8")
     log(f"wrote {run_dir / 'run.json'}")

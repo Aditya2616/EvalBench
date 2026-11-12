@@ -14,8 +14,8 @@ def stub_cfg():
 
 def test_run_json_shape(stub_run):
     _, d = stub_run
-    assert d["meta"]["n_items"] == 120 and len(d["meta"]["checkpoints"]) == 3
-    assert len(d["samples"]) == 360
+    assert d["meta"]["n_items"] == 408 and len(d["meta"]["checkpoints"]) == 3
+    assert len(d["samples"]) == 1224
     assert set(d["order"]) == set(d["items"])
     rate = {r["ckpt"]: r["rate"] for r in d["pass_rates"] if r["task"] == "ALL"}
     assert rate["stub-a"] < rate["stub-b"] < rate["stub-c"]
@@ -37,11 +37,11 @@ def test_generation_is_resumable(tmp_path):
     generate_all(items, cfg["checkpoints"][:1], tmp_path, logs.append)
     path = tmp_path / "generations" / "stub-a.jsonl"
     first = path.read_text().splitlines()
-    assert len(first) == 120
+    assert len(first) == 408
     # simulate an interrupted run, then resume
     path.write_text("\n".join(first[:50]) + "\n")
     generate_all(items, cfg["checkpoints"][:1], tmp_path, logs.append)
     rows = [json.loads(line) for line in path.read_text().splitlines()]
-    assert len(rows) == 120 and len({r["item_id"] for r in rows}) == 120
+    assert len(rows) == 408 and len({r["item_id"] for r in rows}) == 408
     generate_all(items, cfg["checkpoints"][:1], tmp_path, logs.append)
-    assert len(path.read_text().splitlines()) == 120 and "all 120 cached" in logs[-1]
+    assert len(path.read_text().splitlines()) == 408 and "all 408 cached" in logs[-1]

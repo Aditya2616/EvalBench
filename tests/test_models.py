@@ -16,3 +16,15 @@ def test_stub_runner_is_deterministic_and_skill_ordered():
     again = StubRunner(Checkpoint(name="hi", model="stub:90", backend="stub")).generate(items)
     assert [g.text for g in hi] == [g.text for g in again]
     assert sum(g.text == "A" for g in hi) > sum(g.text == "A" for g in lo)
+
+
+def test_device_and_dtype_resolution_can_be_overridden(monkeypatch):
+    from evalbench.models import resolve_device
+
+    monkeypatch.setenv("EVALBENCH_DEVICE", "cpu")
+    monkeypatch.delenv("EVALBENCH_DTYPE", raising=False)
+    assert resolve_device() == ("cpu", "float32")
+    monkeypatch.setenv("EVALBENCH_DEVICE", "cuda")
+    assert resolve_device() == ("cuda", "float16")
+    monkeypatch.setenv("EVALBENCH_DTYPE", "bfloat16")
+    assert resolve_device() == ("cuda", "bfloat16")

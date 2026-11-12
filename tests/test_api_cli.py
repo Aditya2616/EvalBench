@@ -36,7 +36,7 @@ def test_samples_filters(client):
 
 def test_unknown_run_and_latest(client):
     assert client.get("/api/runs/nope").status_code == 404
-    assert client.get("/data/run.json").json()["meta"]["n_items"] == 120
+    assert client.get("/data/run.json").json()["meta"]["n_items"] == 408
 
 
 def test_try_prompt_with_stub_models(client):

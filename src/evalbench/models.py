@@ -1,4 +1,4 @@
-"""Checkpoint runners: batched greedy generation on CPU, plus a deterministic stub for tests."""
+"""Checkpoint runners: batched greedy generation (CUDA when available, else CPU), plus a deterministic stub for tests."""
 
 from __future__ import annotations
 
@@ -17,7 +17,19 @@ def default_threads() -> int:
     return int(env) if env else max(1, (os.cpu_count() or 4) // 4)
 
 
+def resolve_device(spec: str | None = None) -> tuple[str, str]:
+    """Pick (device, dtype name). EVALBENCH_DEVICE / EVALBENCH_DTYPE override; default is cuda in float16 when
+    available, otherwise cpu in float32."""
+    import torch
+
+    dev = spec or os.environ.get("EVALBENCH_DEVICE") or ("cuda" if torch.cuda.is_available() else "cpu")
+    dtype = os.environ.get("EVALBENCH_DTYPE") or ("float16" if dev.startswith("cuda") else "float32")
+    return dev, dtype
+
+
 class Runner(Protocol):
+    info: dict
+
     def generate(self, items: list[Item]) -> list[Generation]: ...
 
 
@@ -38,18 +50,21 @@ def cut_at_stop(text: str, style: str) -> str:
 
 
 class HFRunner:
-    def __init__(self, ckpt: Checkpoint, batch_size: int = 6, threads: int | None = None):
+    def __init__(self, ckpt: Checkpoint, batch_size: int | None = None, threads: int | None = None,
+                 device: str | None = None):
         import torch
         from transformers import AutoModelForCausalLM, AutoTokenizer
 
-        self.ckpt, self.batch_size = ckpt, batch_size
-        torch.set_num_threads(threads or default_threads())
+        self.device, dtype = resolve_device(device)
+        self.ckpt, self.batch_size = ckpt, batch_size or (32 if self.device.startswith("cuda") else 12)
+        torch.set_num_threads(threads or (2 if self.device.startswith("cuda") else default_threads()))
         self.torch = torch
+        self.info = {"device": self.device, "dtype": dtype, "torch": torch.__version__, "batch_size": self.batch_size}
         self.tok = AutoTokenizer.from_pretrained(ckpt.model)
         self.tok.padding_side = "left"
         if self.tok.pad_token is None:
             self.tok.pad_token = self.tok.eos_token
-        self.model = AutoModelForCausalLM.from_pretrained(ckpt.model, dtype=torch.float32).eval()
+        self.model = AutoModelForCausalLM.from_pretrained(ckpt.model, dtype=getattr(torch, dtype)).eval().to(self.device)
 
     def _render(self, item: Item) -> str:
         if self.ckpt.style == "plain":
@@ -67,18 +82,26 @@ class HFRunner:
         while i < len(order):
             budget = order[i].max_new_tokens
             batch = [x for x in order[i : i + self.batch_size] if x.max_new_tokens == budget]
-            i += len(batch)
-            enc = self.tok([self._render(x) for x in batch], return_tensors="pt", padding=True)
+            enc = self.tok([self._render(x) for x in batch], return_tensors="pt", padding=True).to(self.device)
             t0 = time.time()
             extra = {"stop_strings": list(STOP_PLAIN), "tokenizer": self.tok} if self.ckpt.style == "plain" else {}
-            with torch.no_grad():
-                ids = self.model.generate(
-                    **enc, max_new_tokens=budget, do_sample=False, pad_token_id=self.tok.pad_token_id,
-                    temperature=None, top_p=None, top_k=None, **extra,
-                )
+            try:
+                with torch.no_grad():
+                    ids = self.model.generate(
+                        **enc, max_new_tokens=budget, do_sample=False, pad_token_id=self.tok.pad_token_id,
+                        temperature=None, top_p=None, top_k=None, **extra,
+                    )
+            except torch.cuda.OutOfMemoryError:
+                torch.cuda.empty_cache()
+                if self.batch_size == 1:
+                    raise
+                self.batch_size = max(1, self.batch_size // 2)  # retry the same items with a smaller batch
+                self.info["batch_size"] = self.batch_size
+                continue
+            i += len(batch)
             dt = (time.time() - t0) / len(batch)
             plen = enc["input_ids"].shape[1]
-            for x, row in zip(batch, ids, strict=True):
+            for x, row in zip(batch, ids.cpu(), strict=True):
                 new = row[plen:]
                 eos_pos = (new == self.tok.eos_token_id).nonzero()
                 n_new = int(eos_pos[0]) if len(eos_pos) else len(new)
@@ -102,6 +125,7 @@ class StubRunner:
 
     def __init__(self, ckpt: Checkpoint):
         self.ckpt = ckpt
+        self.info = {"device": "stub", "dtype": "none"}
         self.skill = int(ckpt.model.split(":")[1]) if ":" in ckpt.model else 50
 
     def _roll(self, item: Item) -> int:

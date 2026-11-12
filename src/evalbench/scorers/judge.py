@@ -45,19 +45,22 @@ class Judge(Protocol):
 
 
 class LocalJudge:
-    def __init__(self, model_id: str, batch_size: int = 8, threads: int | None = None):
+    def __init__(self, model_id: str, batch_size: int | None = None, threads: int | None = None, device: str | None = None):
         import torch
         from transformers import AutoModelForCausalLM, AutoTokenizer
 
-        from ..models import default_threads
+        from ..models import default_threads, resolve_device
 
-        torch.set_num_threads(threads or default_threads())
-        self.torch, self.name, self.batch_size = torch, f"local:{model_id}", batch_size
+        self.device, dtype = resolve_device(device)
+        on_gpu = self.device.startswith("cuda")
+        torch.set_num_threads(threads or (2 if on_gpu else default_threads()))
+        self.torch, self.name, self.batch_size = torch, f"local:{model_id}", batch_size or (16 if on_gpu else 8)
+        self.info = {"device": self.device, "dtype": dtype}
         self.tok = AutoTokenizer.from_pretrained(model_id)
         self.tok.padding_side = "left"
         if self.tok.pad_token is None:
             self.tok.pad_token = self.tok.eos_token
-        self.model = AutoModelForCausalLM.from_pretrained(model_id, dtype=torch.float32).eval()
+        self.model = AutoModelForCausalLM.from_pretrained(model_id, dtype=getattr(torch, dtype)).eval().to(self.device)
 
     def _ids(self, words: list[str]) -> list[int]:
         ids = set()
@@ -81,7 +84,7 @@ class LocalJudge:
                 )
                 for j in order[i : i + self.batch_size]
             ]
-            enc = self.tok(texts, return_tensors="pt", padding=True)
+            enc = self.tok(texts, return_tensors="pt", padding=True).to(self.device)
             with torch.no_grad():
                 logits = self.model(**enc).logits[:, -1, :].float()
             lp = torch.log_softmax(logits, dim=-1)

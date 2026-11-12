@@ -159,3 +159,24 @@ def targets(verdicts: list[Verdict], per: int = 3) -> dict[str, list[dict[str, A
                          "examples": gg.item_id.head(per).tolist()})
         out[ck] = sorted(rows, key=lambda r: -r["count"])
     return out
+
+
+def cap_hits(gens: list[Any], items: dict[str, str]) -> dict[str, Any]:
+    """Share of generations that ran to the token cap, per checkpoint and per task (items maps item id to task).
+
+    A hit whose text is a loop (same detector as the "degenerate" mode) is counted as a loop: more tokens would not
+    have finished it. The remaining hits are plain budget exhaustion, the part that is an artefact of the cap."""
+    from .scorers.score import _repetitive
+
+    out: dict[str, Any] = {}
+    for ck in sorted({g.ckpt for g in gens}):
+        mine = [g for g in gens if g.ckpt == ck]
+        hits = [g for g in mine if g.truncated]
+        loops = sum(_repetitive(g.text) for g in hits)
+        by_task: dict[str, list[int]] = {}
+        for g in mine:
+            by_task.setdefault(items[g.item_id], []).append(int(g.truncated))
+        out[ck] = {"n": len(mine), "hits": len(hits), "rate": len(hits) / len(mine), "loops": loops,
+                   "budget_only": len(hits) - loops, "budget_rate": (len(hits) - loops) / len(mine),
+                   "by_task": {t: {"n": len(v), "hits": sum(v)} for t, v in sorted(by_task.items())}}
+    return out
