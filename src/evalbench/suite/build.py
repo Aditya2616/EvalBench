@@ -47,7 +47,7 @@ def gsm8k(n: int, rng: random.Random) -> list[Item]:
                 gold=gold,
                 prompt=f"{r.question}\nThink step by step briefly, then finish with a line of the form 'Answer: <number>'.",
                 rubric="Reference final answer: {gold}. Does the response arrive at this same final answer?",
-                max_new_tokens=192,
+                max_new_tokens=160,
                 source="openai/gsm8k",
                 license="MIT",
             )

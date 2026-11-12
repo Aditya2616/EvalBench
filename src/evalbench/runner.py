@@ -33,15 +33,20 @@ def _read_jsonl(path: Path, model):
 
 
 def generate_all(items: list[Item], ckpts: list[Checkpoint], run_dir: Path, log: Log = print,
-                 only: list[str] | None = None, batch_size: int = 6) -> list[Generation]:
-    """Generate for every checkpoint; results append to generations.jsonl so a stopped run resumes."""
-    path = run_dir / "generations.jsonl"
-    done = _read_jsonl(path, Generation)
-    have = {(g.ckpt, g.item_id) for g in done}
+                 only: list[str] | None = None, batch_size: int = 12) -> list[Generation]:
+    """Generate for every checkpoint. Each checkpoint appends to its own file under generations/,
+    so a stopped run resumes where it left off and checkpoints can be generated in parallel processes."""
+    gdir = run_dir / "generations"
+    gdir.mkdir(parents=True, exist_ok=True)
+    out: list[Generation] = []
     for ck in ckpts:
+        path = gdir / f"{ck.name}.jsonl"
+        done = _read_jsonl(path, Generation)
+        out += done
         if only and ck.name not in only:
             continue
-        todo = [i for i in items if (ck.name, i.id) not in have]
+        have = {g.item_id for g in done}
+        todo = [i for i in items if i.id not in have]
         if not todo:
             log(f"{ck.name}: all {len(items)} cached")
             continue
@@ -49,16 +54,16 @@ def generate_all(items: list[Item], ckpts: list[Checkpoint], run_dir: Path, log:
         kw = {"batch_size": batch_size} if ck.backend == "hf" else {}
         runner = make_runner(ck, **kw)
         t0 = time.time()
-        # chunked so progress is saved often
-        for n in range(0, len(todo), 12):
-            chunk = runner.generate(todo[n : n + 12])
+        step = max(batch_size, 6)
+        for n in range(0, len(todo), step):
+            chunk = runner.generate(todo[n : n + step])
             with open(path, "a", encoding="utf-8") as f:
                 for g in chunk:
                     f.write(g.model_dump_json() + "\n")
-            done += chunk
-            log(f"  {ck.name} {min(n + 12, len(todo))}/{len(todo)} ({time.time() - t0:.0f}s)")
+            out += chunk
+            log(f"  {ck.name} {min(n + step, len(todo))}/{len(todo)} ({time.time() - t0:.0f}s)")
         del runner
-    return done
+    return out
 
 
 def _git_commit() -> str:

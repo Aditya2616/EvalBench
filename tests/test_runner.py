@@ -35,7 +35,7 @@ def test_generation_is_resumable(tmp_path):
     items = load_suite(cfg["suite"])
     logs: list[str] = []
     generate_all(items, cfg["checkpoints"][:1], tmp_path, logs.append)
-    path = tmp_path / "generations.jsonl"
+    path = tmp_path / "generations" / "stub-a.jsonl"
     first = path.read_text().splitlines()
     assert len(first) == 120
     # simulate an interrupted run, then resume
