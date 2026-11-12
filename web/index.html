@@ -31,7 +31,7 @@
   <section class="hero wrap">
     <p class="eyebrow">LLM evaluation harness</p>
     <h1>Where models fail,<br><em>not just how often.</em></h1>
-    <p class="lede">The same 120 prompts run through four small open checkpoints. Exact-match checks and a rubric judge score every answer, then the failing answers are clustered into modes you can fine-tune against.</p>
+    <p class="lede">One fixed prompt suite runs through four small open checkpoints. Exact-match checks and a rubric judge score every answer, then the failing answers are clustered into modes you can fine-tune against.</p>
     <p class="banner" id="banner" role="status"><span class="dot"></span><span id="banner-text">Loading the recorded run</span></p>
   </section>
 
@@ -56,15 +56,18 @@
       <canvas id="canvas" role="img" aria-label="Checkpoint pass rates and a map of failing samples grouped by failure mode"></canvas>
     </div>
     <div class="legend-row">
-      <div class="seg" role="radiogroup" aria-label="Dot colour">
-        <button class="btn chip on" data-color="fail" role="radio" aria-checked="true">failures</button>
-        <button class="btn chip" data-color="tag" role="radio" aria-checked="false">by mode</button>
-        <button class="btn chip" data-color="ckpt" role="radio" aria-checked="false">by checkpoint</button>
+      <div class="seg" role="radiogroup" aria-label="Map view">
+        <button class="btn chip on" data-view="islands" role="radio" aria-checked="true">modes</button>
+        <button class="btn chip" data-view="raw" role="radio" aria-checked="false">raw projection</button>
       </div>
-      <p class="note mono">ringed dot = its own tag disagrees with the cluster label</p>
+      <div class="seg" role="radiogroup" aria-label="Dot colour">
+        <button class="btn chip on" data-color="ckpt" role="radio" aria-checked="true">by checkpoint</button>
+        <button class="btn chip" data-color="tag" role="radio" aria-checked="false">by mode</button>
+      </div>
+      <p class="note mono">shape and tint = checkpoint (same in the lanes and the detail sheet). Ringed dot = its embedding looks like another mode.</p>
     </div>
     <ul class="chips" id="cluster-chips" aria-label="Failure clusters"></ul>
-    <p class="note mono" id="cluster-stats"></p>
+    <div id="cluster-stats"></div>
   </section>
 
   <section class="wrap panels" id="panels">
@@ -94,7 +97,7 @@
     <div class="sec-head">
       <p class="eyebrow">04 · Try it</p>
       <h2>Ask the checkpoints <em>yourself</em></h2>
-      <p class="sub">Local server only. Runs your prompt through the selected checkpoints on this machine's CPU and shows which failure signals fire.</p>
+      <p class="sub">Local server only. Runs your prompt through the selected checkpoints on this machine and shows which failure signals fire.</p>
     </div>
     <form class="panel" id="try-form">
       <label class="sr" for="try-prompt">Prompt</label>
@@ -110,8 +113,8 @@
       <h2>Deterministic first, <em>judge second</em></h2>
     </div>
     <ol class="steps">
-      <li><b>Suite</b><span>120 versioned prompts across math, knowledge, format following, truthfulness, unanswerable questions and benign requests that look risky.</span></li>
-      <li><b>Generate</b><span>Greedy decoding of each checkpoint on CPU, cached per sample so a run can resume.</span></li>
+      <li><b>Suite</b><span>A versioned, hashed suite of a few hundred prompts across math, knowledge, format following, truthfulness, unanswerable questions and benign requests that look risky.</span></li>
+      <li><b>Generate</b><span>Greedy decoding of each checkpoint, cached per sample so a run can resume. The device and precision are recorded with the run.</span></li>
       <li><b>Score</b><span>Exact match and rule checks decide wherever a rule exists. A small local judge answers narrow yes/no rubric questions where none does.</span></li>
       <li><b>Cluster</b><span>Failing answers are embedded, clustered, and labelled by the failure tag most members carry. Purity and the odd ones out are shown.</span></li>
     </ol>

@@ -77,6 +77,17 @@ section.wrap { padding-top: clamp(32px, 6vw, 64px); padding-bottom: 8px; }
 .chips button { font: 500 12px var(--mono); color: var(--bone); background: rgba(255, 122, 61, .07); border: 1px solid rgba(255, 122, 61, .35); border-radius: 10px; min-height: 44px; padding: 6px 12px; cursor: pointer; display: flex; flex-direction: column; align-items: flex-start; gap: 1px; text-align: left; -webkit-tap-highlight-color: transparent; }
 .chips button:hover { border-color: var(--ember); }
 .chips small { color: var(--dim); font-size: 10.5px; }
+.chips li.grp { flex: 1 0 100%; margin-top: 8px; }
+.chips .grpbtn { all: unset; box-sizing: border-box; min-height: 44px; display: inline-flex; align-items: center; gap: 10px; cursor: pointer; font: 600 11px var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--bone); }
+.chips .grpbtn i { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+.chips li:not(.grp) button { background: rgba(237, 236, 230, .04); border-color: var(--line-2); }
+.gl { vertical-align: -1px; margin-right: 6px; flex: none; }
+.tags .ck { display: inline-flex; align-items: center; }
+table.rep { border-collapse: collapse; font-size: 11px; margin-top: 10px; min-width: 520px; }
+table.rep th { color: var(--dim); font-weight: 500; text-align: right; padding: 6px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+table.rep td { text-align: right; padding: 6px 10px; color: var(--mute); white-space: nowrap; }
+table.rep th:first-child, table.rep td:first-child { text-align: left; padding-left: 0; }
+table.rep tr.used td { color: var(--lime); }
 
 .grid { display: grid; gap: 14px; grid-template-columns: 1fr; }
 @media (min-width: 900px) { .grid { grid-template-columns: 1fr 1fr; } .panel.wide { grid-column: 1 / -1; } }

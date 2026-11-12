@@ -39,6 +39,23 @@ def run(url: str, out: Path, tag: str = "") -> dict:
             page.evaluate("const s = window.__evalbench.state(); window.__evalbench.seek(s.N + s.FLIGHT)")
             page.wait_for_timeout(300)
             page.locator("#stage").screenshot(path=str(out / f"{tag}{name}-3-map.png"))
+            # raw projection view
+            page.evaluate("window.__evalbench.view('raw')")
+            page.wait_for_timeout(200)
+            page.locator("#stage").screenshot(path=str(out / f"{tag}{name}-3b-raw.png"))
+            page.evaluate("window.__evalbench.view('islands')")
+            page.wait_for_timeout(200)
+            # frame rate while the replay plays (headless, software rendering: a floor, not a phone measurement)
+            page.evaluate("window.__evalbench.seek(5); window.__evalbench.play(true)")
+            report[f"{name}_fps_while_playing"] = page.evaluate("window.__evalbench.fps()")
+            page.evaluate("window.__evalbench.play(false)")
+            # a frame with dots in flight
+            page.evaluate("window.__evalbench.seek(150)")
+            page.locator("#stage").scroll_into_view_if_needed()
+            page.wait_for_timeout(200)
+            page.locator("#stage").screenshot(path=str(out / f"{tag}{name}-2b-flight.png"))
+            page.evaluate("const s = window.__evalbench.state(); window.__evalbench.seek(s.N + s.FLIGHT)")
+            page.wait_for_timeout(200)
             # tap a dot
             pos = page.evaluate("window.__evalbench.dot(0)")
             if pos:
