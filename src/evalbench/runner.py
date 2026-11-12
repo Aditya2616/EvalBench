@@ -1,0 +1,134 @@
+"""Orchestration: generate (resumable) -> score -> cluster -> report -> run.json."""
+
+from __future__ import annotations
+
+import json
+import random
+import subprocess
+import time
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any
+
+from . import __version__, report
+from .failures.cluster import EmbedFn, cluster_failures, minilm_embed
+from .models import make_runner
+from .schema import Checkpoint, Generation, Item, Verdict, load_suite, suite_hash
+from .scorers.judge import Judge, make_judge
+from .scorers.score import judge_pairs, score_generations
+
+Log = Callable[[str], None]
+
+
+def load_config(path: str | Path) -> dict[str, Any]:
+    cfg = json.loads(Path(path).read_text(encoding="utf-8"))
+    cfg["checkpoints"] = [Checkpoint.model_validate(c) for c in cfg["checkpoints"]]
+    return cfg
+
+
+def _read_jsonl(path: Path, model):
+    if not path.exists():
+        return []
+    return [model.model_validate_json(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
+def generate_all(items: list[Item], ckpts: list[Checkpoint], run_dir: Path, log: Log = print,
+                 only: list[str] | None = None, batch_size: int = 6) -> list[Generation]:
+    """Generate for every checkpoint; results append to generations.jsonl so a stopped run resumes."""
+    path = run_dir / "generations.jsonl"
+    done = _read_jsonl(path, Generation)
+    have = {(g.ckpt, g.item_id) for g in done}
+    for ck in ckpts:
+        if only and ck.name not in only:
+            continue
+        todo = [i for i in items if (ck.name, i.id) not in have]
+        if not todo:
+            log(f"{ck.name}: all {len(items)} cached")
+            continue
+        log(f"{ck.name}: generating {len(todo)} of {len(items)}")
+        kw = {"batch_size": batch_size} if ck.backend == "hf" else {}
+        runner = make_runner(ck, **kw)
+        t0 = time.time()
+        # chunked so progress is saved often
+        for n in range(0, len(todo), 12):
+            chunk = runner.generate(todo[n : n + 12])
+            with open(path, "a", encoding="utf-8") as f:
+                for g in chunk:
+                    f.write(g.model_dump_json() + "\n")
+            done += chunk
+            log(f"  {ck.name} {min(n + 12, len(todo))}/{len(todo)} ({time.time() - t0:.0f}s)")
+        del runner
+    return done
+
+
+def _git_commit() -> str:
+    try:
+        return subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True, timeout=5).stdout.strip()
+    except Exception:
+        return ""
+
+
+def score_run(items: list[Item], gens: list[Generation], judge: Judge | None) -> tuple[list[Verdict], list[dict]]:
+    verdicts = score_generations(items, gens, judge)
+    pairs = judge_pairs(items, gens, verdicts, judge) if judge is not None else []
+    return verdicts, pairs
+
+
+def build_run_json(items: list[Item], ckpts: list[Checkpoint], gens: list[Generation], verdicts: list[Verdict],
+                   pairs: list[dict], judge_name: str, embed: EmbedFn = minilm_embed, seed: int = 2616,
+                   diff_pair: list[str] | None = None) -> dict[str, Any]:
+    names = [c.name for c in ckpts]
+    gi = {(g.ckpt, g.item_id): g for g in gens}
+    clusters = cluster_failures(items, gens, verdicts, embed=embed)
+    rates = report.pass_rates(verdicts)
+    fwr = report.field_win_rate(verdicts)
+    modes = report.mode_table(verdicts)
+    samples = []
+    for v in verdicts:
+        g = gi[(v.ckpt, v.item_id)]
+        samples.append({"c": names.index(v.ckpt), "i": v.item_id, "p": v.passed, "s": round(v.score, 3), "m": v.mode,
+                        "tr": g.truncated, "tx": g.text, "ev": v.evidence, "jp": None if v.judge_p is None else round(v.judge_p, 3),
+                        "sc": v.scorer, "sec": g.seconds, "nt": g.new_tokens})
+    order = [i.id for i in items]
+    random.Random(seed).shuffle(order)
+    judge_judge = report.judge_stats(verdicts, pairs)
+    base, after = (diff_pair or [names[0], names[-1]])[:2]
+    return {
+        "meta": {
+            "version": __version__, "suite_hash": suite_hash(items), "n_items": len(items), "judge": judge_name,
+            "commit": _git_commit(), "created": time.strftime("%Y-%m-%d"),
+            "checkpoints": [c.model_dump() for c in ckpts],
+            "seconds_per_item": {c: round(sum(g.seconds for g in gens if g.ckpt == c) / max(1, sum(g.ckpt == c for g in gens)), 2) for c in names},
+        },
+        "items": {i.id: {"task": i.task, "prompt": i.prompt, "gold": i.gold, "source": i.source, "license": i.license,
+                         "checker": i.checker} for i in items},
+        "samples": samples,
+        "order": order,
+        "pass_rates": rates.to_dict("records"),
+        "field_win": fwr,
+        "win_matrix": report.win_matrix(verdicts),
+        "mode_table": {c: {m: int(modes.loc[c, m]) if c in modes.index else 0 for m in modes.columns} for c in names},
+        "clusters": clusters,
+        "judge": judge_judge,
+        "targets": report.targets(verdicts),
+        "diff": report.diff(verdicts, base, after),
+    }
+
+
+def run_all(config: dict[str, Any], run_dir: str | Path, judge_spec: str | None = None, log: Log = print,
+            embed: EmbedFn = minilm_embed, only: list[str] | None = None) -> dict[str, Any]:
+    run_dir = Path(run_dir)
+    run_dir.mkdir(parents=True, exist_ok=True)
+    items = load_suite(config["suite"])
+    ckpts: list[Checkpoint] = config["checkpoints"]
+    gens = generate_all(items, ckpts, run_dir, log, only=only)
+    if only:
+        return {}
+    judge = make_judge(judge_spec or config.get("judge"))
+    log(f"scoring with judge {judge.name}")
+    verdicts, pairs = score_run(items, gens, judge)
+    data = build_run_json(items, ckpts, gens, verdicts, pairs, judge.name, embed=embed, diff_pair=config.get("diff"))
+    (run_dir / "verdicts.jsonl").write_text("\n".join(v.model_dump_json() for v in verdicts), encoding="utf-8")
+    (run_dir / "run.json").write_text(json.dumps(data, separators=(",", ":")), encoding="utf-8")
+    log(f"wrote {run_dir / 'run.json'}")
+    return data
