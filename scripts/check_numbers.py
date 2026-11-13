@@ -187,6 +187,8 @@ def inline(d: dict) -> dict[str, str]:
         "base_hall": str(d["mode_table"][x["from"]]["hallucination"]), "it_hall": str(d["mode_table"][x["to"]]["hallucination"]),
         "it_degen": str(d["mode_table"][x["to"]]["degenerate"]), "base_degen": str(d["mode_table"][x["from"]]["degenerate"]),
         "it_loops": str(m["cap_hits"][x["to"]]["loops"]), "it_budget": str(m["cap_hits"][x["to"]]["budget_only"]),
+        "rate_lo": f"{min(R[(c, 'ALL')]['rate'] for c in names(d)) * 100:.1f}",
+        "rate_hi": f"{max(R[(c, 'ALL')]['rate'] for c in names(d)) * 100:.1f}",
         "half_lo": f"{min((R[(c, 'ALL')]['ci_hi'] - R[(c, 'ALL')]['ci_lo']) / 2 * 100 for c in names(d)):.1f}",
         "half_hi": f"{max((R[(c, 'ALL')]['ci_hi'] - R[(c, 'ALL')]['ci_lo']) / 2 * 100 for c in names(d)):.1f}",
         "n_disagree_plain": str(st["representations"]["plain"]["mislabelled"]),
@@ -197,7 +199,8 @@ def inline(d: dict) -> dict[str, str]:
         "centred_purity": f"{st['representations']['task_centred']['purity']:.3f}",
         "chosen_mislabelled": str(st["mislabelled"]),
         "n_math": str(R[(names(d)[0], "math")]["n"]),
-        "default_judge": m["judge"].split(":", 1)[1], "n_strict": str(d["judge_comparison"]["judges"][m["judge"]]["strict"]["n"]),
+        "default_judge": "`" + m["judge"].split(":", 1)[1] + "`",  # backticks sit inside the marker pair
+        "n_strict": str(d["judge_comparison"]["judges"][m["judge"]]["strict"]["n"]),
         "n_pairs": str(d["judge_comparison"]["judges"][m["judge"]]["pairwise"]["n"]),
         "judgeyes": b_judgeyes(d), "memory": b_memory(d),
     }

@@ -1,20 +1,46 @@
 # EvalBench
 
+[![CI](https://github.com/Aditya2616/EvalBench/actions/workflows/ci.yml/badge.svg)](https://github.com/Aditya2616/EvalBench/actions/workflows/ci.yml)
+[![Licence: MIT](https://img.shields.io/badge/licence-MIT-blue.svg)](LICENSE)
+
 An evaluation harness that finds where a model fails, not just how often.
 
-It runs one prompt suite across several model checkpoints, scores every output (exact match and rule checks first, a small rubric judge only where no rule exists), assigns each failure a mode with deterministic detectors (hallucination, format break, over-refusal, wrong answer, degenerate output), then embeds the failing answers, clusters them, and shows how well the clusters line up with the modes. The point is to make the next fine-tuning cycle target something specific. I work on post-training and evaluation, and "pass rate went up a few points" never told me what to fix next.
+It runs one prompt suite across several model checkpoints, scores every output (exact match and rule checks first, a small rubric judge only where no rule exists), assigns each failure a mode with deterministic detectors (hallucination, format break, over-refusal, wrong answer, degenerate output), then embeds the failing answers, clusters them, and shows how well the clusters line up with the modes. The point is to make the next fine-tuning cycle target something specific. A pass-rate change does not say what to fix next; this harness is built to answer that.
 
-The `docs/` folder is a static site that replays a real recorded run (serve it with any static file server, see below). It is a recording, not a live model.
+In the recorded run, four sub-1B checkpoints pass between <!-- n:rate_lo -->27.0<!-- /n:rate_lo -->% and <!-- n:rate_hi -->44.6<!-- /n:rate_hi -->% of <!-- n:n_items -->408<!-- /n:n_items --> prompts. That is a small study, not a benchmark: differences of a few points are within the noise, and the intervals below say so.
 
-![Race and failure map, desktop](docs/assets/desktop-3-map.png)
+![Race and failure map at the end of the replay, desktop: pass rate per checkpoint above, one island per failure mode below](docs/assets/desktop-3-map.png)
 
-<img src="docs/assets/phone-2-replay.png" width="300" alt="Phone layout">
+<img src="docs/assets/phone-replay-end.png" width="260" alt="Phone layout at the end of the replay (408 of 408): checkpoint lanes with pass rates, then the failure map">
 
 The same map as the raw, ungrouped projection, and a frame with failing samples in flight from their checkpoint lanes:
 
-![Raw projection, desktop](docs/assets/desktop-3b-raw.png)
+![Raw projection of the failure embeddings, desktop, coloured by detector mode, with a legend underneath](docs/assets/desktop-3b-raw.png)
 
-![Samples in flight, desktop](docs/assets/desktop-2b-flight.png)
+![Failing samples in flight from their checkpoint lanes to their mode islands, desktop (mid-replay, so the pass rates shown are partial)](docs/assets/desktop-2b-flight.png)
+
+## How it works
+
+```mermaid
+flowchart LR
+  S[suite.jsonl<br/>408 prompts, seeded, hashed, versioned] --> G[generate<br/>HF, greedy, cached per checkpoint]
+  G --> R[score<br/>exact match, constraints, lexicons]
+  R --> J[rubric judge<br/>yes/no logprob, only where no rule, disk cache]
+  J --> D[detect modes<br/>deterministic rules per failure]
+  D --> C[embed + cluster<br/>MiniLM, three representations, islands by mode]
+  C --> O[run.json]
+  O --> A[FastAPI + web UI]
+  O --> X[docs/ static demo]
+  O --> N[check_numbers.py<br/>README tables]
+```
+
+- `src/evalbench/suite`: builds the suite from GSM8K, MMLU, IFEval, TruthfulQA, XSTest plus items I wrote (fake-entity questions, JSON tasks). Fixed seed, content hash, version.
+- `src/evalbench/models.py`: batched greedy generation (CUDA in float16 when available, otherwise CPU in float32). Base models get a plain prompt and stop at the next "Question:". Output is appended per checkpoint to `runs/<id>/generations/`, so a stopped run resumes.
+- `src/evalbench/scorers`: extractors, constraint verifiers, refusal and abstention lexicons, and the judge interface with `local:`, `openai:` and `anthropic:` backends and the on-disk call cache.
+- `src/evalbench/failures/cluster.py`: the three representations, purity and silhouette, islands, sub-clusters, the list of disagreeing samples.
+- `src/evalbench/report.py`: pandas reports (Wilson intervals, win-rate matrix, mode table, diff, judge statistics, cap-hit rates, fine-tuning targets).
+- `src/evalbench/api.py`: FastAPI (`/health`, `/api/runs`, `/api/runs/{id}`, samples, and `/api/try` to run a custom prompt on local checkpoints).
+- `web/`: vanilla JS and canvas. The race and the failure map replay the real per-sample verdicts in a shuffled order; nothing is simulated. Each checkpoint keeps one colour and glyph in the lanes, the dots and the detail sheet. A failing sample flies from its checkpoint's lane along an eased path to its place in its mode island. The canvas caps its pixel ratio and pauses off screen. Tap a dot or cluster for a drawer (a bottom sheet on phones) with the prompt, gold answer, output and evidence.
 
 ## What the run found
 
@@ -101,7 +127,7 @@ I compared three representations with KMeans (k chosen by silhouette, 3 to 12). 
 <!-- /numbers:clusters -->
 
 - **plain** is the embedding of "[task] output". It mostly groups by what the question was about (see its AMI with the task), and it is the unsupervised baseline.
-- **task-centred** subtracts the mean embedding of each task. It removes the topic as intended (AMI with the task falls), but it loses the failure mode too, so it did not improve on plain. I kept it in the table because it was the obvious first idea.
+- **task-centred** subtracts the mean embedding of each task. It removes the topic as intended (AMI with the task falls), but it loses the failure mode too, so it did not improve on plain. It is in the table as the obvious first idea.
 - **failure_text** embeds a short description of how the answer failed ("wrong final number", "broke a formatting rule: contains capital letters; repeats itself", "refused a harmless request"), written from the verdict evidence, plus the task-centred output embedding. It gives the clearest clusters, but it is built from the detectors' evidence, so its agreement with the modes is partly by construction. Read it as a map of failure descriptions, not as an independent test of the detectors. The plain row is the independent one, and it agrees with the detectors only moderately.
 
 Inside each island:
@@ -127,40 +153,17 @@ I compared two local judges on the recorded generations against the labels I can
 | Qwen/Qwen2.5-1.5B-Instruct | 65.9% (672) | 0.37 | 87%, kappa 0.74 (384) | 68% (200) | 72% |
 <!-- /numbers:judge -->
 
-The rule I fixed before running the comparison: the default judge is the one with the higher kappa against exact-match labels, which is Qwen2.5-0.5B-Instruct (`<!-- n:default_judge -->Qwen/Qwen2.5-0.5B-Instruct<!-- /n:default_judge -->`). On the exact-match labels: <!-- n:judgeyes -->Qwen/Qwen2.5-0.5B-Instruct says yes to 31% when 25% are correct; Qwen/Qwen2.5-1.5B-Instruct says yes to 58% when 25% are correct<!-- /n:judgeyes -->. The 1.5B judge is lenient on reference-answer questions but better on the lexicon and pairwise checks, so the result is mixed, not a clear win. Both judges are weak and flip their pairwise answer in most cases when the two responses are swapped. That is why the design is rule-first: the judge decides only the open-ended truthfulness items, and the 0.5B judge is also one of the four checkpoints, so its verdicts on its own answers are biased. Treat the truth column as the least reliable one. The judge is validated on a different question type than the one it decides, since the truth items have no exact-match gold.
+The rule I fixed before running the comparison: the default judge is the one with the higher kappa against exact-match labels, which is Qwen2.5-0.5B-Instruct (<!-- n:default_judge -->`Qwen/Qwen2.5-0.5B-Instruct`<!-- /n:default_judge -->). On the exact-match labels: <!-- n:judgeyes -->Qwen/Qwen2.5-0.5B-Instruct says yes to 31% when 25% are correct; Qwen/Qwen2.5-1.5B-Instruct says yes to 58% when 25% are correct<!-- /n:judgeyes -->. The 1.5B judge is lenient on reference-answer questions but better on the lexicon and pairwise checks, so the result is mixed, not a clear win. Both judges are weak and flip their pairwise answer in most cases when the two responses are swapped. That is why the design is rule-first: the judge decides only the open-ended truthfulness items, and the 0.5B judge is also one of the four checkpoints, so its verdicts on its own answers are biased. Treat the truth column as the least reliable one. The judge is validated on a different question type than the one it decides, since the truth items have no exact-match gold.
 
 Hosted judges (OpenAI, Anthropic API) exist as adapters behind the same interface. I never called either API: they are unit-tested against stubbed HTTP transports only, and the Anthropic API returns no token probabilities, so that adapter gives hard 0 or 1 judgements.
 
 ## Engineering notes
 
-**Judge memory.** An earlier version of the judge comparison used 8 to 15 GB of system RAM and made the machine unusable. The cause was the forward pass: it computed logits for every position of every prompt, that is batch x length x vocabulary (152k entries for Qwen), several GB per batch, when only the last position is needed. It now projects only the last position (`logits_to_keep=1`), forms batches by a padded-token budget, loads weights straight onto the GPU in float16 (loading to the CPU first briefly held a second full copy of a 1.5B model, 6.7 GB), runs each judge in its own process so only one judge model is ever in memory, and caches every judgement on disk so a stopped run resumes. Measured peak, whole process: <!-- n:memory -->local:Qwen/Qwen2.5-0.5B-Instruct: peak RAM 1.9 GB, peak VRAM 1.2 GB; local:Qwen/Qwen2.5-1.5B-Instruct: peak RAM 3.9 GB, peak VRAM 3.4 GB<!-- /n:memory -->.
+**Judge memory.** The judge needs the logits of the last position only, so it projects just that position (`logits_to_keep=1`) instead of computing batch x length x vocabulary (152k entries for Qwen, several GB per batch). It forms batches by a padded-token budget, loads weights straight onto the GPU in float16 (loading to the CPU first would briefly hold a second full copy of a 1.5B model, 6.7 GB), runs each judge in its own process so only one judge model is ever in memory, and caches every judgement on disk so a stopped run resumes. Measured peak, whole process: <!-- n:memory -->local:Qwen/Qwen2.5-0.5B-Instruct: peak RAM 1.9 GB, peak VRAM 1.2 GB; local:Qwen/Qwen2.5-1.5B-Instruct: peak RAM 3.9 GB, peak VRAM 3.4 GB<!-- /n:memory -->.
 
 **One device per run.** Generations for all four checkpoints come from one device and dtype (see the setup line above), recorded next to the generations in `runs/main/generations/*.meta.json`. A run that tries to resume on a different device or dtype stops with an error instead of mixing them.
 
 **Numbers.** Every number in this README between the `numbers` markers is written by `python scripts/check_numbers.py --write` from `runs/main/run.json`, and a fast test (`tests/test_numbers.py`) fails if the README, the exported demo data in `docs/data/run.json`, or the suite metadata drift out of sync. The web UI and the static demo read the same `run.json`.
-
-## Architecture
-
-```mermaid
-flowchart LR
-  S[suite.jsonl<br/>408 prompts, seeded, hashed, versioned] --> G[generate<br/>HF, greedy, cached per checkpoint]
-  G --> R[score<br/>exact match, constraints, lexicons]
-  R --> J[rubric judge<br/>yes/no logprob, only where no rule, disk cache]
-  J --> D[detect modes<br/>deterministic rules per failure]
-  D --> C[embed + cluster<br/>MiniLM, three representations, islands by mode]
-  C --> O[run.json]
-  O --> A[FastAPI + web UI]
-  O --> X[docs/ static demo]
-  O --> N[check_numbers.py<br/>README tables]
-```
-
-- `src/evalbench/suite`: builds the suite from GSM8K, MMLU, IFEval, TruthfulQA, XSTest plus items I wrote (fake-entity questions, JSON tasks). Fixed seed, content hash, version.
-- `src/evalbench/models.py`: batched greedy generation (CUDA in float16 when available, otherwise CPU in float32). Base models get a plain prompt and stop at the next "Question:". Output is appended per checkpoint to `runs/<id>/generations/`, so a stopped run resumes.
-- `src/evalbench/scorers`: extractors, constraint verifiers, refusal and abstention lexicons, and the judge interface with `local:`, `openai:` and `anthropic:` backends and the on-disk call cache.
-- `src/evalbench/failures/cluster.py`: the three representations, purity and silhouette, islands, sub-clusters, the list of disagreeing samples.
-- `src/evalbench/report.py`: pandas reports (Wilson intervals, win-rate matrix, mode table, diff, judge statistics, cap-hit rates, fine-tuning targets).
-- `src/evalbench/api.py`: FastAPI (`/health`, `/api/runs`, `/api/runs/{id}`, samples, and `/api/try` to run a custom prompt on local checkpoints).
-- `web/`: vanilla JS and canvas. The race and the failure map replay the real per-sample verdicts in a shuffled order; nothing is simulated. Each checkpoint keeps one colour and glyph in the lanes, the dots and the detail sheet. A failing sample flies from its checkpoint's lane along an eased path to its place in its mode island. The canvas caps its pixel ratio and pauses off screen. Tap a dot or cluster for a drawer (a bottom sheet on phones) with the prompt, gold answer, output and evidence.
 
 ## Quickstart
 
@@ -172,6 +175,8 @@ evalbench serve                                        # http://127.0.0.1:8101, 
 # or, without a backend:
 python -m http.server 8101 --directory docs
 ```
+
+## Reproduce
 
 The committed run needs no models. To redo the run (about 3 GB of model downloads; minutes on a GPU, hours on a CPU; resumable): `bash scripts/reproduce.sh`. It builds the suite, generates, compares the judges, writes `runs/main/run.json`, exports `docs/` and rewrites the README numbers. The device is chosen automatically (`EVALBENCH_DEVICE=cpu` forces the CPU). Screenshots come from `python scripts/shots.py` (headless Chromium at 1440x900 and 390x844; it also reports console errors, HTTP errors and horizontal scroll).
 
@@ -188,6 +193,22 @@ Other commands: `evalbench report --run runs/main`, `evalbench diff --run runs/m
 - The judge reads the probability of "Yes" against "No" instead of parsing free text, and is checked against the rule labels, with the numbers shown above.
 - Failure modes come from deterministic detectors. The embedding is measured against them and shown honestly, including where it disagrees.
 - Greedy decoding and a content-hashed, versioned suite, so a run is reproducible and two runs can be diffed.
+
+## Layout
+
+```
+src/evalbench/   suite/ (prompt suite), models.py, scorers/, failures/cluster.py, report.py, api.py, cli.py
+web/             UI source: vanilla JS and canvas
+docs/            static demo (a copy of web/ plus data/run.json), notes/, assets/
+runs/main/       generations, verdicts, judge caches and run.json of the recorded run
+data/            the versioned prompt suite
+scripts/         check_numbers.py (README and demo data from run.json), reproduce.sh, shots.py
+tests/           fast offline tests
+```
+
+## Static demo
+
+The `docs/` folder is a static site that replays the recorded run in `runs/main`. It is a recording, not a live model. There is no hosted copy yet; the folder can be served by GitHub Pages, or locally with `python -m http.server 8101 --directory docs`.
 
 ## Limitations
 
@@ -206,4 +227,4 @@ EvalBench is a small experiment next to mature projects that do evaluation well:
 
 Code: MIT, Aditya Jain. Models (all Apache-2.0): SmolLM2 by Hugging Face, Qwen2.5 by Alibaba, all-MiniLM-L6-v2 by sentence-transformers. Data: GSM8K (MIT), MMLU (MIT), IFEval (Apache-2.0), TruthfulQA (Apache-2.0), XSTest (CC-BY-4.0), plus items I wrote. No model weights are committed.
 
-Built by [Aditya Jain](https://adityajain16.vercel.app). Repo: https://github.com/Aditya2616/EvalBench
+Built by [Aditya Jain](https://adityajain16.vercel.app).

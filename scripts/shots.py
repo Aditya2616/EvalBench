@@ -12,6 +12,15 @@ from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
+# Only the screenshots the README embeds are written; the other steps still run for the checks below.
+KEPT = {"desktop-3-map", "desktop-3b-raw", "desktop-2b-flight", "phone-replay-end"}
+
+
+def shot(target, out: Path, stem: str) -> None:
+    """Write the screenshot only if the README uses it."""
+    if any(stem.endswith(k) for k in KEPT):
+        target.screenshot(path=str(out / f"{stem}.png"))
+
 
 def run(url: str, out: Path, tag: str = "") -> dict:
     out.mkdir(parents=True, exist_ok=True)
@@ -32,19 +41,28 @@ def run(url: str, out: Path, tag: str = "") -> dict:
             page.goto(url, wait_until="networkidle")
             page.wait_for_function("window.__evalbench !== undefined", timeout=15000)
             page.wait_for_timeout(1500)
-            page.screenshot(path=str(out / f"{tag}{name}-1-hero.png"))
-            # mid replay
-            page.evaluate("window.__evalbench.seek(60)")
+            # the end of the replay: every prompt scored, every failing sample landed on its island
+            page.evaluate("document.fonts.ready")
+            page.evaluate("const s = window.__evalbench.state(); window.__evalbench.seek(s.N + s.FLIGHT)")
+            if name == "phone":
+                # controls just below the sticky bar, so the counter, the lanes and the whole map are in the frame
+                page.evaluate(
+                    "const h = document.querySelector('header').getBoundingClientRect().height;"
+                    "window.scrollTo({top: document.querySelector('.controls').getBoundingClientRect().top + window.scrollY - h - 12, behavior: 'instant'})"
+                )
+                page.wait_for_timeout(500)
+                report["phone_counter_at_end"] = page.inner_text("#count")
+                bottom = page.evaluate("document.querySelector('#stage').getBoundingClientRect().bottom")
+                if any(f"{tag}{name}-replay-end".endswith(k) for k in KEPT):
+                    # cut at the bottom edge of the stage card, not through the toggles below it
+                    page.screenshot(path=str(out / f"{tag}{name}-replay-end.png"), clip={"x": 0, "y": 0, "width": 390, "height": bottom + 10})
             page.locator("#stage").scroll_into_view_if_needed()
             page.wait_for_timeout(300)
-            page.screenshot(path=str(out / f"{tag}{name}-2-replay.png"))
-            page.evaluate("const s = window.__evalbench.state(); window.__evalbench.seek(s.N + s.FLIGHT)")
-            page.wait_for_timeout(300)
-            page.locator("#stage").screenshot(path=str(out / f"{tag}{name}-3-map.png"))
+            shot(page.locator("#stage"), out, f"{tag}{name}-3-map")
             # raw projection view
             page.evaluate("window.__evalbench.view('raw')")
             page.wait_for_timeout(200)
-            page.locator("#stage").screenshot(path=str(out / f"{tag}{name}-3b-raw.png"))
+            shot(page.locator("#stage"), out, f"{tag}{name}-3b-raw")
             page.evaluate("window.__evalbench.view('islands')")
             page.wait_for_timeout(200)
             # frame rate while the replay plays (headless, software rendering: a floor, not a phone measurement)
@@ -55,7 +73,7 @@ def run(url: str, out: Path, tag: str = "") -> dict:
             page.evaluate("window.__evalbench.seek(150)")
             page.locator("#stage").scroll_into_view_if_needed()
             page.wait_for_timeout(200)
-            page.locator("#stage").screenshot(path=str(out / f"{tag}{name}-2b-flight.png"))
+            shot(page.locator("#stage"), out, f"{tag}{name}-2b-flight")
             page.evaluate("const s = window.__evalbench.state(); window.__evalbench.seek(s.N + s.FLIGHT)")
             page.wait_for_timeout(200)
             # tap a dot
@@ -71,16 +89,13 @@ def run(url: str, out: Path, tag: str = "") -> dict:
                     page.mouse.click(x, y)
                 page.wait_for_timeout(900)
                 report[f"{name}_drawer_open"] = page.evaluate("!document.getElementById('drawer').hidden")
-                page.screenshot(path=str(out / f"{tag}{name}-4-drawer.png"))
                 page.keyboard.press("Escape")
                 page.wait_for_timeout(600)
                 report[f"{name}_drawer_closed"] = page.evaluate("document.getElementById('drawer').hidden")
             page.locator("#panels").scroll_into_view_if_needed()
             page.wait_for_timeout(1200)
-            page.screenshot(path=str(out / f"{tag}{name}-5-panels.png"), full_page=False)
             page.locator("#diff-sec").scroll_into_view_if_needed()
             page.wait_for_timeout(500)
-            page.screenshot(path=str(out / f"{tag}{name}-6-diff.png"))
             report[f"{name}_overflow_x"] = page.evaluate("document.documentElement.scrollWidth - window.innerWidth")
             small = page.evaluate(
                 "[...document.querySelectorAll('button,input[type=range],a.mark,.links a,.checks label')]"

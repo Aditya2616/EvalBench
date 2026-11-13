@@ -108,7 +108,7 @@ const Stage = (() => {
     L.sc = sc;
     DOTS.forEach((d) => {
       d.ix = cx + d.p[pre + 'x'] * sc; d.iy = cy + d.p[pre + 'y'] * sc;
-      d.rx = cx + d.p.rx * (pw / 2); d.ry = cy + d.p.ry * (ph / 2);
+      d.rx = cx + d.p.rx * (pw / 2); d.ry = cy - 10 + d.p.ry * (ph / 2 - 12); // raw view keeps a strip at the bottom for its legend
     });
     L.subs = D.clusters.clusters.map((c) => ({ c, x: cx + c[pre + 'x'] * sc, y: cy + c[pre + 'y'] * sc, r: c[pre + 'r'] * sc }));
     L.isl = D.clusters.islands.map((i) => ({ i, x: cx + i[pre + 'x'] * sc, y: cy + i[pre + 'y'] * sc, r: i[pre + 'r'] * sc }));
@@ -293,7 +293,7 @@ const Stage = (() => {
       ctx.font = mono(12); ctx.fillStyle = 'rgba(237,236,230,.5)'; ctx.textAlign = 'center';
       ctx.fillText('press play: failing samples will land here', W / 2, (L.my0 + L.my1) / 2); ctx.textAlign = 'left';
     }
-    count.textContent = `${Math.floor(t)} / ${N}`;
+    count.textContent = `${Math.min(N, Math.floor(t))} / ${N}`; // t runs past N while the last samples fly in
     if (document.activeElement !== scrub) scrub.value = t;
   }
 
