@@ -10,10 +10,16 @@ The `docs/` folder is a static site that replays a real recorded run (serve it w
 
 <img src="docs/assets/phone-2-replay.png" width="300" alt="Phone layout">
 
+The same map as the raw, ungrouped projection, and a frame with failing samples in flight from their checkpoint lanes:
+
+![Raw projection, desktop](docs/assets/desktop-3b-raw.png)
+
+![Samples in flight, desktop](docs/assets/desktop-2b-flight.png)
+
 ## What the run found
 
 <!-- numbers:setup -->
-Run recorded on 2026-11-13 from commit `56d5036`: suite version 2.0 (hash `9eab83ef8bbf`), 408 prompts, 4 checkpoints (smollm2-135m-it, smollm2-360m-base, smollm2-360m-it, qwen2.5-0.5b-it), generation on cuda in float16, default judge `local:Qwen/Qwen2.5-0.5B-Instruct` on cuda in float16.
+Run recorded on 2026-11-13 from commit `13f8f99`: suite version 2.0 (hash `9eab83ef8bbf`), 408 prompts, 4 checkpoints (smollm2-135m-it, smollm2-360m-base, smollm2-360m-it, qwen2.5-0.5b-it), generation on cuda in float16, default judge `local:Qwen/Qwen2.5-0.5B-Instruct` on cuda in float16.
 <!-- /numbers:setup -->
 
 It is a small study of four sub-1B checkpoints, not a benchmark. With <!-- n:n_items -->408<!-- /n:n_items --> prompts the 95% intervals on a checkpoint's pass rate are about plus or minus <!-- n:half_lo -->4.3<!-- /n:half_lo --> to <!-- n:half_hi -->4.8<!-- /n:half_hi --> points. A pass is a rule pass, or the judge saying "no misconception" on the truth items.

@@ -351,7 +351,7 @@ const Stage = (() => {
     document.fonts && document.fonts.ready.then(() => { dirty = true; });
     $('#play').addEventListener('click', () => { if (t >= N + FLIGHT) t = 0; setPlaying(!playing); });
     $('#replay').addEventListener('click', () => { t = 0; selected = null; setPlaying(true); dirty = true; });
-    scrub.max = N;
+    scrub.max = N; count.textContent = `0 / ${N}`;
     scrub.addEventListener('input', () => { t = Math.min(+scrub.value, N); setPlaying(false); dirty = true; });
     document.querySelectorAll('[data-speed]').forEach((b) => b.addEventListener('click', () => { speed = +b.dataset.speed; setToggle('[data-speed]', 'speed', b.dataset.speed); }));
     document.querySelectorAll('[data-color]').forEach((b) => b.addEventListener('click', () => { colorMode = b.dataset.color; setToggle('[data-color]', 'color', colorMode); dirty = true; }));
