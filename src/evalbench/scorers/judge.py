@@ -133,9 +133,9 @@ class LocalJudge:
         from ..models import default_threads, load_causal_lm, resolve_device
 
         self.device, dtype = resolve_device(device)
-        on_gpu = self.device.startswith("cuda")
-        torch.set_num_threads(threads or (2 if on_gpu else default_threads()))
-        self.torch, self.name, self.batch_size = torch, f"local:{model_id}", batch_size or (16 if on_gpu else 8)
+        use_cuda = self.device.startswith("cuda")
+        torch.set_num_threads(threads or (2 if use_cuda else default_threads()))
+        self.torch, self.name, self.batch_size = torch, f"local:{model_id}", batch_size or (16 if use_cuda else 8)
         self.info = {"device": self.device, "dtype": dtype, "batch_size": self.batch_size}
         self.tok = AutoTokenizer.from_pretrained(model_id)
         self.tok.padding_side = "left"
