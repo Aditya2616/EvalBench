@@ -70,3 +70,30 @@ def test_stub_judge_reads_reference():
     j = StubJudge()
     assert j.p_yes([rubric_prompt(q, "p", "so 18")])[0] > 0.5
     assert j.p_yes([rubric_prompt(q, "p", "so 19")])[0] < 0.5
+
+
+def test_cached_judge_resumes_and_reuses(tmp_path):
+    from evalbench.scorers.judge import CachedJudge
+
+    class Counting:
+        name = "count"
+
+        def __init__(self):
+            self.seen = 0
+
+        def p_yes(self, prompts):
+            self.seen += len(prompts)
+            return [0.25 if "a" in p else 0.75 for p in prompts]
+
+        def p_first(self, prompts):
+            return [0.5] * len(prompts)
+
+    inner = Counting()
+    path = tmp_path / "calls.jsonl"
+    j = CachedJudge(inner, path, chunk=2)
+    assert j.p_yes(["ab", "cd", "ab", "xy", "za"]) == [0.25, 0.75, 0.25, 0.75, 0.25]
+    assert inner.seen == 4  # the duplicate prompt is asked once
+    again = Counting()
+    j2 = CachedJudge(again, path)  # a new process reads the file and asks nothing
+    assert j2.p_yes(["cd", "ab"]) == [0.75, 0.25] and again.seen == 0 and j2.hits == 2
+    assert len(path.read_text().splitlines()) == 4

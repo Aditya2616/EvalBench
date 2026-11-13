@@ -16,7 +16,7 @@ from . import __version__, report
 from .failures.cluster import EmbedFn, cluster_failures, minilm_embed
 from .models import make_runner
 from .schema import Checkpoint, Generation, Item, Verdict, load_suite, suite_hash
-from .scorers.judge import Judge, make_judge
+from .scorers.judge import CachedJudge, Judge, make_judge, peak_rss_mb
 from .scorers.score import judge_pairs, score_generations
 
 Log = Callable[[str], None]
@@ -104,13 +104,16 @@ def score_cached(run_dir: Path, items: list[Item], gens: list[Generation], spec:
         if c["key"] == key:
             log(f"judge {spec}: using cached judgements")
             return [Verdict.model_validate(v) for v in c["verdicts"]], c["pairs"], c["judge"]
-    judge = make_judge(spec)
-    log(f"judge {spec}: scoring {len(gens)} generations")
+    judge = CachedJudge(make_judge(spec), run_dir / "judge_calls" / (re.sub(r"\W+", "_", spec) + ".jsonl"))
+    log(f"judge {spec}: scoring {len(gens)} generations ({len(judge.store)} judgements already on disk)")
     t0 = time.time()
     verdicts, pairs = score_run(items, gens, judge)
-    log(f"judge {spec}: done in {time.time() - t0:.0f}s")
+    info = dict(getattr(judge, "info", {}))
+    info["peak_rss_mb"] = peak_rss_mb()
+    log(f"judge {spec}: done in {time.time() - t0:.0f}s, {judge.calls - judge.hits} new judgements, {judge.hits} reused, "
+        f"peak RAM {info['peak_rss_mb']:.0f} MB" + (f", peak VRAM {info['peak_vram_mb']:.0f} MB" if "peak_vram_mb" in info else ""))
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"key": key, "judge": judge.name, "info": getattr(judge, "info", {}), "verdicts": [v.model_dump() for v in verdicts], "pairs": pairs}), encoding="utf-8")
+    path.write_text(json.dumps({"key": key, "judge": judge.name, "info": info, "verdicts": [v.model_dump() for v in verdicts], "pairs": pairs}), encoding="utf-8")
     return verdicts, pairs, judge.name
 
 

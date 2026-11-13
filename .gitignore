@@ -12,3 +12,4 @@ models/
 *.safetensors
 *.bin
 .shots/
+runs/*/judge_calls/

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -29,15 +30,32 @@ def cmd_run(a: argparse.Namespace) -> None:
     run_all(cfg, a.out, judge_spec=a.judge, only=a.only)
 
 
+def cmd_judge(a: argparse.Namespace) -> None:
+    """Score the recorded generations with ONE judge and exit, so the judge model's memory is released."""
+    cfg = load_config(a.config)
+    items = load_suite(cfg["suite"])
+    run_dir = Path(a.run)
+    gens = generate_all(items, cfg["checkpoints"], run_dir, print)
+    if a.limit:
+        gens = gens[: a.limit]
+    score_cached(run_dir, items, gens, a.judge)
+
+
 def cmd_calibrate(a: argparse.Namespace) -> None:
-    """Score the recorded generations with each candidate judge and compare it with the deterministic labels."""
+    """Compare candidate judges with the deterministic labels. Each judge runs in its own process, one after the
+    other, so only one judge model is ever in memory."""
     cfg = load_config(a.config)
     items = load_suite(cfg["suite"])
     run_dir = Path(a.run)
     gens = generate_all(items, cfg["checkpoints"], run_dir, print)
     res = {}
     for spec in a.judges:
-        verdicts, pairs, _ = score_cached(run_dir, items, gens, spec)
+        if spec.split(":")[0] == "local":
+            r = subprocess.run([sys.executable, "-m", "evalbench.cli", "judge", "--config", a.config, "--run", str(run_dir),
+                                "--judge", spec])
+            if r.returncode:
+                raise SystemExit(f"judge {spec} failed with exit code {r.returncode}")
+        verdicts, pairs, _ = score_cached(run_dir, items, gens, spec)  # reads the cache the subprocess wrote
         res[spec] = report.judge_stats(verdicts, pairs)
         print(spec, json.dumps(res[spec], indent=1))
     best = max(res, key=lambda s: res[s].get("strict", {}).get("kappa", -1))
@@ -137,6 +155,12 @@ def main(argv: list[str] | None = None) -> None:
     s.add_argument("--run", required=True)
     s.add_argument("--judges", nargs="+", required=True)
     s.set_defaults(fn=cmd_calibrate)
+    s = sp.add_parser("judge", help="score recorded generations with one judge, then exit")
+    s.add_argument("--config", default="configs/default.json")
+    s.add_argument("--run", required=True)
+    s.add_argument("--judge", required=True)
+    s.add_argument("--limit", type=int, help="only the first N generations (a quick memory check)")
+    s.set_defaults(fn=cmd_judge)
     s = sp.add_parser("report", help="print the summary of a run")
     s.add_argument("--run", required=True)
     s.set_defaults(fn=cmd_report)

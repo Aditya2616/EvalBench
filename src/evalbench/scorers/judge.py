@@ -8,9 +8,13 @@ transport only.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import math
 import os
 import re
+import sys
+from pathlib import Path
 from typing import Protocol
 
 import httpx
@@ -44,7 +48,82 @@ class Judge(Protocol):
         ...
 
 
+def peak_rss_mb() -> float:
+    """Peak resident memory of this process in MB (0.0 when the platform gives no way to ask)."""
+    try:
+        if sys.platform == "win32":
+            import ctypes
+            from ctypes import wintypes
+
+            class Counters(ctypes.Structure):
+                _fields_ = [("cb", wintypes.DWORD), ("PageFaultCount", wintypes.DWORD),
+                            ("PeakWorkingSetSize", ctypes.c_size_t), ("WorkingSetSize", ctypes.c_size_t),
+                            ("QuotaPeakPagedPoolUsage", ctypes.c_size_t), ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                            ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t), ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+                            ("PagefileUsage", ctypes.c_size_t), ("PeakPagefileUsage", ctypes.c_size_t)]
+
+            c = Counters()
+            c.cb = ctypes.sizeof(c)
+            k32 = ctypes.windll.kernel32
+            k32.GetCurrentProcess.restype = wintypes.HANDLE
+            ok = ctypes.windll.psapi.GetProcessMemoryInfo(k32.GetCurrentProcess(), ctypes.byref(c), c.cb)
+            return round(c.PeakWorkingSetSize / 2**20, 1) if ok else 0.0
+        import resource
+
+        kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        return round(kb / 1024 / (1024 if sys.platform == "darwin" else 1), 1)
+    except Exception:
+        return 0.0
+
+
+class CachedJudge:
+    """Wraps any judge with an on-disk cache of single answers, written after every chunk, so a stopped
+    scoring run resumes where it stopped and a rerun costs nothing."""
+
+    def __init__(self, inner: Judge, path: str | Path, chunk: int = 64):
+        self.inner, self.path, self.chunk = inner, Path(path), chunk
+        self.name = inner.name
+        self.info = getattr(inner, "info", {})
+        self.mem: dict[str, float] = {}
+        self.hits = self.calls = 0
+        self.store: dict[str, float] = {}
+        if self.path.exists():
+            for line in self.path.read_text(encoding="utf-8").splitlines():
+                if line.strip():
+                    d = json.loads(line)
+                    self.store[d["k"]] = d["p"]
+
+    def _key(self, kind: str, prompt: str) -> str:
+        return hashlib.sha1(f"{self.name}|{kind}|{prompt}".encode()).hexdigest()[:20]
+
+    def _run(self, kind: str, prompts: list[str]) -> list[float]:
+        keys = [self._key(kind, p) for p in prompts]
+        todo = sorted({k: p for k, p in zip(keys, prompts, strict=True) if k not in self.store}.items(), key=lambda kp: len(kp[1]))
+        self.calls += len(keys)
+        self.hits += len(keys) - len(todo)
+        fn = self.inner.p_yes if kind == "yes" else self.inner.p_first
+        for i in range(0, len(todo), self.chunk):
+            part = todo[i : i + self.chunk]
+            ps = fn([p for _, p in part])
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            with open(self.path, "a", encoding="utf-8") as f:
+                for (k, _), v in zip(part, ps, strict=True):
+                    self.store[k] = v
+                    f.write(json.dumps({"k": k, "p": v}) + "\n")
+            self.info = getattr(self.inner, "info", {})
+        return [self.store[k] for k in keys]
+
+    def p_yes(self, prompts: list[str]) -> list[float]:
+        return self._run("yes", prompts)
+
+    def p_first(self, prompts: list[str]) -> list[float]:
+        return self._run("first", prompts)
+
+
 class LocalJudge:
+    # A batch is limited by padded tokens as well as by count, so one long prompt cannot inflate memory.
+    MAX_BATCH_TOKENS = 6144
+
     def __init__(self, model_id: str, batch_size: int | None = None, threads: int | None = None, device: str | None = None):
         import torch
         from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -55,7 +134,7 @@ class LocalJudge:
         on_gpu = self.device.startswith("cuda")
         torch.set_num_threads(threads or (2 if on_gpu else default_threads()))
         self.torch, self.name, self.batch_size = torch, f"local:{model_id}", batch_size or (16 if on_gpu else 8)
-        self.info = {"device": self.device, "dtype": dtype}
+        self.info = {"device": self.device, "dtype": dtype, "batch_size": self.batch_size}
         self.tok = AutoTokenizer.from_pretrained(model_id)
         self.tok.padding_side = "left"
         if self.tok.pad_token is None:
@@ -74,23 +153,35 @@ class LocalJudge:
     def _two_way(self, prompts: list[str], pos: list[str], neg: list[str]) -> list[float]:
         torch = self.torch
         pid, nid = self._ids(pos), self._ids(neg)
-        order = sorted(range(len(prompts)), key=lambda i: len(prompts[i]))  # similar lengths batch together
+        texts_all = [
+            self.tok.apply_chat_template(
+                [{"role": "system", "content": SYSTEM}, {"role": "user", "content": p}],
+                add_generation_prompt=True, tokenize=False,
+            )
+            for p in prompts
+        ]
+        lens = [len(self.tok.encode(t, add_special_tokens=False)) for t in texts_all]
+        order = sorted(range(len(prompts)), key=lambda i: lens[i])  # similar lengths batch together
         res_sorted: list[float] = []
-        for i in range(0, len(order), self.batch_size):
-            texts = [
-                self.tok.apply_chat_template(
-                    [{"role": "system", "content": SYSTEM}, {"role": "user", "content": prompts[j]}],
-                    add_generation_prompt=True, tokenize=False,
-                )
-                for j in order[i : i + self.batch_size]
-            ]
-            enc = self.tok(texts, return_tensors="pt", padding=True).to(self.device)
+        i = 0
+        while i < len(order):
+            n = 1
+            while n < self.batch_size and i + n < len(order) and lens[order[i + n]] * (n + 1) <= self.MAX_BATCH_TOKENS:
+                n += 1
+            part = order[i : i + n]
+            i += n
+            enc = self.tok([texts_all[j] for j in part], return_tensors="pt", padding=True).to(self.device)
             with torch.no_grad():
-                logits = self.model(**enc).logits[:, -1, :].float()
+                # logits_to_keep=1: only the last position is projected onto the vocabulary. Without it the model
+                # materialises batch x length x vocab logits (several GB for a 150k vocabulary).
+                logits = self.model(**enc, logits_to_keep=1).logits[:, -1, :].float()
             lp = torch.log_softmax(logits, dim=-1)
             yes = torch.logsumexp(lp[:, pid], dim=-1)
             no = torch.logsumexp(lp[:, nid], dim=-1)
             res_sorted += torch.sigmoid(yes - no).tolist()
+        if self.device.startswith("cuda"):
+            self.info["peak_vram_mb"] = round(torch.cuda.max_memory_allocated() / 2**20, 1)
+        self.info["peak_rss_mb"] = peak_rss_mb()
         res = [0.0] * len(prompts)
         for pos_i, j in enumerate(order):
             res[j] = res_sorted[pos_i]
