@@ -297,7 +297,7 @@ def cluster_failures(
 
     layouts: dict[str, Any] = {}
     for key, asp in (("sq", 1.0), ("wide", WIDE_ASPECT)):
-        centres = _pack([i["R"] + 1.2 for i in islands_raw], asp)
+        centres = _pack([i["R"] + 2.5 for i in islands_raw], asp)
         circles = [(cx, cy, i["R"]) for (cx, cy), i in zip(centres, islands_raw, strict=True)]
         x0, x1 = min(x - r for x, _, r in circles), max(x + r for x, _, r in circles)
         y0, y1 = min(y - r for _, y, r in circles), max(y + r for _, y, r in circles)

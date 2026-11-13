@@ -112,20 +112,26 @@ const Stage = (() => {
     });
     L.subs = D.clusters.clusters.map((c) => ({ c, x: cx + c[pre + 'x'] * sc, y: cy + c[pre + 'y'] * sc, r: c[pre + 'r'] * sc }));
     L.isl = D.clusters.islands.map((i) => ({ i, x: cx + i[pre + 'x'] * sc, y: cy + i[pre + 'y'] * sc, r: i[pre + 'r'] * sc }));
-    // island labels sit above their island; push apart where they would collide
-    const lpx = phone ? 9.5 : 10.5, minY = mapTop + 20, maxY = my1;
-    L.lab = L.isl.map((o) => ({ o, w: (MODE_LABEL[o.i.mode].length + 5) * lpx * 0.64 + 8, x: clamp(o.x, 60, W - 60), y: clamp(o.y - o.r - 10, minY, maxY) }));
-    for (let it = 0; it < 80; it++) {
-      let moved = false;
-      for (let i = 0; i < L.lab.length; i++) for (let j = i + 1; j < L.lab.length; j++) {
-        const a = L.lab[i], b = L.lab[j], ox = (a.w + b.w) / 2 - Math.abs(a.x - b.x), oy = 2 * lpx + 6 - Math.abs(a.y - b.y);
-        if (ox > 0 && oy > 0) {
-          const up = a.y <= b.y ? -1 : 1, dd = oy / 2 + 0.5;
-          a.y = clamp(a.y + up * dd, minY, maxY); b.y = clamp(b.y - up * dd, minY, maxY); moved = true;
-        }
+    // island labels: try above and below each island, keep the spot that covers the least of any other island or label
+    const lpx = phone ? 9.5 : 10.5, minY = mapTop + 20, maxY = my1 + 8, lh = 2 * lpx + 6;
+    const placed = [];
+    const hit = (x, y, w, o) => { // how far the label box pokes into another island's circle
+      const dx = Math.max(Math.abs(o.x - x) - w / 2, 0), dy = Math.max(Math.abs(o.y - (y - lpx + lh / 2)) - lh / 2, 0);
+      return Math.max(0, o.r - Math.hypot(dx, dy));
+    };
+    L.lab = [];
+    [...L.isl].sort((p, q) => q.i.n - p.i.n).forEach((o) => {
+      const w = (MODE_LABEL[o.i.mode].length + 5) * lpx * 0.64 + 8, x = clamp(o.x, w / 2 + 4, W - w / 2 - 4);
+      let best = null;
+      for (const y0 of [o.y - o.r - 10, o.y + o.r + lpx + 8, o.y - o.r + 4]) {
+        const y = clamp(y0, minY, maxY);
+        let cost = Math.abs(y - y0) * 3;
+        for (const q of L.isl) if (q !== o) cost += hit(x, y, w, q) * 2;
+        for (const q of placed) if (Math.abs(q.x - x) < (q.w + w) / 2 && Math.abs(q.y - y) < lh) cost += 60;
+        if (!best || cost < best.cost - 0.5) best = { y, cost };
       }
-      if (!moved) break;
-    }
+      const lb = { o, w, x, y: best.y }; placed.push(lb); L.lab.push(lb);
+    });
     dirty = true;
   }
 
