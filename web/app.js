@@ -70,9 +70,12 @@ function prepare() {
       if (s.p) continue;
       const p = pts.get(NAMES[c] + '|' + id);
       if (!p) continue;
-      DOTS.push({ c, id, k, spawn: k + c * 0.2, p, s });
+      DOTS.push({ c, id, k, spawn: k + c * 0.2, p, s, ringA: 0.9 });
     }
   });
+  const share = {};
+  for (const d of DOTS) { const m = d.p.mode; share[m] = share[m] || [0, 0]; share[m][1]++; if (d.p.mislabelled) share[m][0]++; }
+  for (const d of DOTS) if (share[d.p.mode][0] / share[d.p.mode][1] > 0.5) d.ringA = 0.3; // an island that is ringed almost everywhere would drown in rings
 }
 
 /* ------------------------------------------------------------------ stage (race + failure map) */
@@ -205,7 +208,7 @@ const Stage = (() => {
       ctx.globalAlpha = fl ? 1 : 0.86;
       ctx.fillStyle = dotColor(d);
       ctx.beginPath(); shape(d.c, x, y, fl ? rad * 1.3 : rad); ctx.fill();
-      if (!fl && d.p.mislabelled) { ctx.globalAlpha = 1; ctx.strokeStyle = '#edece6'; ctx.lineWidth = 1.1; ctx.beginPath(); ctx.arc(x, y, rad + 2.5, 0, 7); ctx.stroke(); }
+      if (!fl && d.p.mislabelled) { ctx.globalAlpha = d.ringA; ctx.strokeStyle = '#edece6'; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(x, y, rad + 2.5, 0, 7); ctx.stroke(); }
       if (!fl && selected && selected.c === d.c && selected.id === d.id) {
         ctx.globalAlpha = 1; ctx.strokeStyle = '#d7ff3f'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(x, y, rad + 5, 0, 7); ctx.stroke();
       }
@@ -538,7 +541,7 @@ function renderChips() {
   const tbl = el('table', 'rep mono'), head = el('tr');
   ['representation', 'k', 'silhouette', 'purity', 'AMI vs mode', 'AMI vs task', 'ringed'].forEach((h) => head.append(el('th', '', h)));
   tbl.append(head);
-  const nm = { plain: 'plain embedding', task_centred: 'task-centred embedding' };
+  const nm = { plain: 'plain embedding', task_centred: 'task-centred embedding', failure_text: 'failure description + centred embedding' };
   Object.entries(s.representations).forEach(([k, r]) => {
     const tr = el('tr', k === s.chosen ? 'used' : '');
     [nm[k] + (k === s.chosen ? ' (used)' : ''), r.k, r.silhouette.toFixed(3), r.purity.toFixed(3), r.ami_vs_mode.toFixed(3), r.ami_vs_task.toFixed(3), r.mislabelled].forEach((v) => tr.append(el('td', '', String(v))));

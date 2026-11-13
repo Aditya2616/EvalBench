@@ -165,7 +165,19 @@ def _pack(radii: list[float], aspect: float = 1.0) -> list[tuple[float, float]]:
     return [pos[i] for i in range(len(radii))]
 
 
-def _relax(P: np.ndarray, r: float, dmin: float = 1.15, iters: int = 80) -> np.ndarray:
+def _enclose(circles: list[tuple[float, float, float]]) -> tuple[float, float, float]:
+    """Centre and radius of a small circle that contains all the given circles (x, y, r), found by nudging a
+    centre toward the circle that sticks out furthest. Used so an island hugs the sub-clusters it contains."""
+    cx = sum(x for x, _, _ in circles) / len(circles)
+    cy = sum(y for _, y, _ in circles) / len(circles)
+    for k in range(400):
+        far = max(circles, key=lambda c: math.hypot(c[0] - cx, c[1] - cy) + c[2])
+        w = 1.0 / (k + 2)
+        cx, cy = cx + (far[0] - cx) * w * 0.5, cy + (far[1] - cy) * w * 0.5
+    return cx, cy, max(math.hypot(x - cx, y - cy) + r for x, y, r in circles)
+
+
+def _relax(P: np.ndarray, r: float, dmin: float = 1.15, iters: int = 200) -> np.ndarray:
     """Push points apart until no two are closer than dmin, keeping them inside a disc of radius r."""
     P = P.copy()
     for _ in range(iters):
@@ -263,12 +275,14 @@ def cluster_failures(
         terms = _terms([" ".join(fgen[n].text for n in g) or "empty" for g in groups])
         subs = []
         for g, tm in zip(groups, terms, strict=True):
-            r = 0.72 * math.sqrt(len(g)) + 1.4
+            r = 0.85 * math.sqrt(len(g)) + 1.4
             top_task, top_n = Counter(tasks[n] for n in g).most_common(1)[0]
             subs.append({"members": g, "r": r, "terms": tm, "task": top_task, "task_share": round(top_n / len(g), 2),
                          "local": _local_xy(X[g], r, seed)})
         centres = _pack([s["r"] + 0.6 for s in subs], 1.0)
-        enc = max(math.hypot(cx, cy) + s["r"] for (cx, cy), s in zip(centres, subs, strict=True)) + 0.8
+        ex, ey, enc = _enclose([(cx, cy, s["r"]) for (cx, cy), s in zip(centres, subs, strict=True)])
+        centres = [(cx - ex, cy - ey) for cx, cy in centres]
+        enc += 0.8
         first = len(sub_info)
         for (cx, cy), s in zip(centres, subs, strict=True):
             sid = len(sub_info)
