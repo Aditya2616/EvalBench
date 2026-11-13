@@ -27,6 +27,8 @@ def run(url: str, out: Path, tag: str = "") -> dict:
             errors: list[str] = []
             page.on("console", lambda m, e=errors: m.type == "error" and e.append(m.text))
             page.on("pageerror", lambda x, e=errors: e.append(str(x)))
+            page.on("response", lambda r, e=errors: r.status >= 400 and e.append(f"HTTP {r.status} {r.url}"))
+            page.on("requestfailed", lambda r, e=errors: e.append(f"request failed {r.url}"))
             page.goto(url, wait_until="networkidle")
             page.wait_for_function("window.__evalbench !== undefined", timeout=15000)
             page.wait_for_timeout(1500)

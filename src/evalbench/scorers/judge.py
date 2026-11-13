@@ -64,9 +64,11 @@ def peak_rss_mb() -> float:
 
             c = Counters()
             c.cb = ctypes.sizeof(c)
-            k32 = ctypes.windll.kernel32
+            k32, psapi = ctypes.WinDLL("kernel32"), ctypes.WinDLL("psapi")
             k32.GetCurrentProcess.restype = wintypes.HANDLE
-            ok = ctypes.windll.psapi.GetProcessMemoryInfo(k32.GetCurrentProcess(), ctypes.byref(c), c.cb)
+            psapi.GetProcessMemoryInfo.argtypes = [wintypes.HANDLE, ctypes.POINTER(Counters), wintypes.DWORD]
+            psapi.GetProcessMemoryInfo.restype = wintypes.BOOL
+            ok = psapi.GetProcessMemoryInfo(k32.GetCurrentProcess(), ctypes.byref(c), c.cb)
             return round(c.PeakWorkingSetSize / 2**20, 1) if ok else 0.0
         import resource
 
@@ -126,9 +128,9 @@ class LocalJudge:
 
     def __init__(self, model_id: str, batch_size: int | None = None, threads: int | None = None, device: str | None = None):
         import torch
-        from transformers import AutoModelForCausalLM, AutoTokenizer
+        from transformers import AutoTokenizer
 
-        from ..models import default_threads, resolve_device
+        from ..models import default_threads, load_causal_lm, resolve_device
 
         self.device, dtype = resolve_device(device)
         on_gpu = self.device.startswith("cuda")
@@ -139,7 +141,7 @@ class LocalJudge:
         self.tok.padding_side = "left"
         if self.tok.pad_token is None:
             self.tok.pad_token = self.tok.eos_token
-        self.model = AutoModelForCausalLM.from_pretrained(model_id, dtype=getattr(torch, dtype)).eval().to(self.device)
+        self.model = load_causal_lm(model_id, self.device, dtype)
 
     def _ids(self, words: list[str]) -> list[int]:
         ids = set()

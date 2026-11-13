@@ -27,6 +27,18 @@ def resolve_device(spec: str | None = None) -> tuple[str, str]:
     return dev, dtype
 
 
+def load_causal_lm(model_id: str, device: str, dtype: str):
+    """Load a causal LM. On CUDA the weights go straight to the GPU (device_map), so system RAM does not briefly
+    hold a second full copy of the model: a 1.5B model peaked at 6.7 GB of RAM when loaded to the CPU first,
+    and at 3.9 GB this way."""
+    import torch
+    from transformers import AutoModelForCausalLM
+
+    kw = {"device_map": device} if device.startswith("cuda") else {}
+    model = AutoModelForCausalLM.from_pretrained(model_id, dtype=getattr(torch, dtype), **kw).eval()
+    return model if kw else model.to(device)
+
+
 class Runner(Protocol):
     info: dict
 
@@ -53,7 +65,7 @@ class HFRunner:
     def __init__(self, ckpt: Checkpoint, batch_size: int | None = None, threads: int | None = None,
                  device: str | None = None):
         import torch
-        from transformers import AutoModelForCausalLM, AutoTokenizer
+        from transformers import AutoTokenizer
 
         self.device, dtype = resolve_device(device)
         self.ckpt, self.batch_size = ckpt, batch_size or (32 if self.device.startswith("cuda") else 12)
@@ -64,7 +76,7 @@ class HFRunner:
         self.tok.padding_side = "left"
         if self.tok.pad_token is None:
             self.tok.pad_token = self.tok.eos_token
-        self.model = AutoModelForCausalLM.from_pretrained(ckpt.model, dtype=getattr(torch, dtype)).eval().to(self.device)
+        self.model = load_causal_lm(ckpt.model, self.device, dtype)
 
     def _render(self, item: Item) -> str:
         if self.ckpt.style == "plain":
