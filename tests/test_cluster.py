@@ -44,11 +44,11 @@ def test_one_island_per_mode_and_islands_do_not_overlap():
                 assert d >= isl[a][key + "r"] + isl[b][key + "r"] - 1e-6
 
 
-def test_both_representations_are_reported_and_points_stay_in_their_island():
+def test_all_representations_are_reported_and_points_stay_in_their_island():
     items, gens, verdicts = make()
     out = cluster_failures(items, gens, verdicts, embed=fake_embed, k_range=(2, 6))
     reps = out["stats"]["representations"]
-    assert set(reps) == {"plain", "task_centred"} and out["stats"]["chosen"] in reps
+    assert set(reps) == {"plain", "task_centred", "failure_text"} and out["stats"]["chosen"] in reps
     by_sub = {c["id"]: c for c in out["clusters"]}
     isl = {i["mode"]: i for i in out["islands"]}
     for p in out["points"]:
@@ -67,3 +67,16 @@ def test_mislabelled_members_are_reported():
 def test_too_few_failures():
     items, gens, verdicts = make(1)
     assert cluster_failures(items, gens, verdicts, embed=fake_embed)["clusters"] == []
+
+
+def test_failure_description_names_how_it_failed_not_the_topic():
+    from evalbench.failures.cluster import describe_failure
+
+    items, gens, verdicts = make()
+    seen = {}
+    for g, v in zip(gens, verdicts, strict=True):
+        if not v.passed:
+            it = next(i for i in items if i.id == g.item_id)
+            seen.setdefault(it.task, describe_failure(it, g, v))
+    assert all(isinstance(t, str) and 3 < len(t) < 160 for t in seen.values())
+    assert not any(c.isdigit() for t in seen.values() for c in t if "formatting" in t)

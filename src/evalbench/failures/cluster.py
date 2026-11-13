@@ -8,9 +8,15 @@ each mode island, named by what they contain. Every sample whose detector mode d
 the label of its embedding cluster is flagged, and a raw t-SNE projection is exported as well so
 nothing is hidden behind the island layout.
 
-Two representations are compared: the plain embedding of "[task] output", and an embedding of the
-output with the mean embedding of its task subtracted, which removes most of "what the question
-was about" and keeps "how the answer went wrong".
+Three representations are compared and all three are reported:
+  plain            embedding of "[task] output", the unsupervised baseline (it mostly groups by topic);
+  task_centred     the output embedding minus the mean output embedding of its task, which removes most of
+                   "what the question was about";
+  failure_text     an embedding of a short description of how the answer failed, written from the verdict
+                   (the scorer's evidence, whether it ran to the cap or looped), plus the task-centred output
+                   embedding. Because the description is built from the detectors' evidence, its agreement with
+                   the detector modes is partly by construction: it is a map of failure descriptions, not an
+                   independent test of the detectors. The plain baseline is the independent one.
 """
 
 from __future__ import annotations
@@ -48,6 +54,38 @@ def minilm_embed(texts: list[str]) -> np.ndarray:
 
 def failure_text(item: Item, gen: Generation) -> str:
     return f"[{item.task}] {gen.text.strip()[:400]}"
+
+
+def describe_failure(item: Item, gen: Generation, v: Verdict) -> str:
+    """One short sentence on how this answer failed, from the verdict evidence (no model involved)."""
+    ev, task = v.evidence, item.task
+    if not gen.text.strip():
+        how = "empty output"
+    elif task == "math":
+        how = "no final answer line" if "extracted None" in ev else "wrong final number"
+    elif task == "knowledge":
+        how = "no option letter given" if "extracted None" in ev else "picked a wrong option"
+    elif task == "format":
+        how = "broke a formatting rule: " + re.sub(r"\[.*?\]|\d+", "", ev).strip(" ;")
+    elif task == "truth":
+        how = "stated the common misconception"
+    elif task == "unanswerable":
+        how = "invented details about something that does not exist"
+    else:
+        phrase = ev.split(":", 1)[1].strip(" '\"") if "refusal phrase" in ev else ""
+        how = "refused a harmless request" + (f" ({phrase})" if phrase else "")
+    extra = []
+    if gen.truncated:
+        extra.append("ran to the token limit")
+    if _looping(gen.text):
+        extra.append("repeats itself")
+    return how + ("; " + ", ".join(extra) if extra else "")
+
+
+def _looping(text: str) -> bool:
+    from ..scorers.score import _repetitive
+
+    return _repetitive(text)
 
 
 def structural(gen: Generation) -> list[float]:
@@ -197,7 +235,8 @@ def cluster_failures(
     pos = {(g.ckpt, g.item_id): n for n, g in enumerate(all_gens)}
     centred = np.hstack([_unit(np.array([E[pos[(v.ckpt, v.item_id)]] - mean[v.task] for v in fails])), feat])
 
-    reps = {"plain": plain, "task_centred": centred}
+    desc = embed([describe_failure(ii[v.item_id], g, v) for v, g in zip(fails, fgen, strict=True)])
+    reps = {"plain": plain, "task_centred": centred, "failure_text": np.hstack([desc, 0.7 * centred[:, :-4]])}
     ev = {name: _evaluate(X, modes, tasks, k_range, seed) for name, X in reps.items()}
     chosen = max(ev, key=lambda k: (ev[k]["ami_vs_mode"], ev[k]["purity"]))
     X, lab, lab_mode = reps[chosen], ev[chosen]["_labels"], ev[chosen]["_lab_mode"]
@@ -304,7 +343,7 @@ def cluster_failures(
         "ami_vs_task": c["ami_vs_task"], "mislabelled": c["mislabelled"], "representations": pub,
         "ami_mode_vs_task": round(float(adjusted_mutual_info_score(modes, tasks)), 3),
         "extent": {k: L["half"] for k, L in layouts.items()}, "n_islands": len(islands), "n_sub": len(clusters),
-        "embedder": "all-MiniLM-L6-v2 + 4 structural features; KMeans (k by silhouette) for purity; islands by detector mode, "
-                    "sub-clusters by KMeans inside each island; raw t-SNE of the chosen representation",
+        "embedder": "all-MiniLM-L6-v2; three representations compared (plain, task-centred, failure description); KMeans (k by silhouette) "
+                    "for purity; islands by detector mode, sub-clusters by KMeans inside each island; raw t-SNE of the chosen representation",
     }
     return {"clusters": clusters, "islands": islands, "points": points, "global": globals_, "stats": stats}
