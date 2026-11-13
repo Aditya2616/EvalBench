@@ -24,7 +24,7 @@ EvalBench starts where these tools stop at "score per task". The next step I wan
   2. The small local judge is used only for narrow yes/no rubric questions, scored by token log-probabilities of "Yes"/"No" (no free-text parsing), run in both orders for pairwise comparisons, and ties are kept as ties.
   3. The judge is validated, not trusted: on every item with a deterministic gold label EvalBench reports judge accuracy, Cohen's kappa and position-flip rate. These numbers go in the README and UI, so the weakness of the judge is visible.
   4. Self-preference is real: the judge model is also one of the checkpoints. The UI flags that checkpoint's judged scores.
-  5. Win-rates carry bootstrap confidence intervals; with ~120 prompts differences of a few points are noise and the UI should say so.
+  5. Win-rates carry bootstrap confidence intervals; with ~120 prompts (planned; the built suite has 408) differences of a few points are noise and the UI should say so.
 
 ## 3. Models (licences read from the Hugging Face API, measured)
 

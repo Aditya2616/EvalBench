@@ -11,11 +11,21 @@ const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const MODE_LABEL = { hallucination: 'Hallucination', format_break: 'Format break', over_refusal: 'Over-refusal', wrong_answer: 'Wrong answer', degenerate: 'Degenerate' };
 const MODES = Object.keys(MODE_LABEL);
 const MODE_COLOR = { hallucination: '#ff7a3d', format_break: '#ffd23d', over_refusal: '#ff4d6d', wrong_answer: '#a99bff', degenerate: '#7fb4cf' };
-const CK_COLOR = ['#d7ff3f', '#8fd3ff', '#ffffff', '#ff9ec4', '#c8a7ff'];
+// each checkpoint keeps one shape and one tint in the lanes, the map and the detail sheet
+const CK_TINT = ['#7fc8ff', '#ffd23d', '#c4a8ff', '#ff9ec4', '#9be8c0'];
+const SHAPES = ['circle', 'square', 'triangle', 'diamond', 'circle'];
+function glyph(c, size = 12) {
+  const NS = 'http://www.w3.org/2000/svg', svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('viewBox', '-6 -6 12 12'); svg.setAttribute('width', size); svg.setAttribute('height', size); svg.setAttribute('class', 'gl'); svg.setAttribute('aria-hidden', 'true');
+  const sh = SHAPES[c % SHAPES.length], p = document.createElementNS(NS, sh === 'circle' ? 'circle' : 'path');
+  if (sh === 'circle') { p.setAttribute('r', 4.6); } else if (sh === 'square') { p.setAttribute('d', 'M-4 -4H4V4H-4Z'); } else if (sh === 'triangle') { p.setAttribute('d', 'M0 -5.2L5 4L-5 4Z'); } else { p.setAttribute('d', 'M0 -5.6L5.6 0L0 5.6L-5.6 0Z'); }
+  p.setAttribute('fill', CK_TINT[c % CK_TINT.length]); svg.append(p);
+  return svg;
+}
 const TASKS = ['math', 'knowledge', 'format', 'truth', 'unanswerable', 'benign'];
 const TASK_SHORT = { math: 'math', knowledge: 'know', format: 'format', truth: 'truth', unanswerable: 'unans', benign: 'benign', ALL: 'all' };
-const RATE = 8; // replayed prompts per second at 1x
-const FLIGHT = 5; // prompts of replay time a dot takes to fly to its cluster
+const RATE = 24; // replayed prompts per second at 1x
+const FLIGHT = 16; // prompts of replay time (about two thirds of a second) a dot takes to fly to its place
 
 function wilson(k, n, z = 1.96) {
   if (!n) return [0, 0];
@@ -60,9 +70,12 @@ function prepare() {
       if (s.p) continue;
       const p = pts.get(NAMES[c] + '|' + id);
       if (!p) continue;
-      DOTS.push({ c, id, k, spawn: k + c * 0.15, p, s });
+      DOTS.push({ c, id, k, spawn: k + c * 0.2, p, s, ringA: 0.9 });
     }
   });
+  const share = {};
+  for (const d of DOTS) { const m = d.p.mode; share[m] = share[m] || [0, 0]; share[m][1]++; if (d.p.mislabelled) share[m][0]++; }
+  for (const d of DOTS) if (share[d.p.mode][0] / share[d.p.mode][1] > 0.5) d.ringA = 0.3; // an island that is ringed almost everywhere would drown in rings
 }
 
 /* ------------------------------------------------------------------ stage (race + failure map) */
@@ -70,46 +83,55 @@ const Stage = (() => {
   const canvas = $('#canvas'), ctx = canvas.getContext('2d');
   let W = 0, H = 0, dpr = 1, L = null;
   let t = 0, playing = false, speed = 1, visible = false, started = false, last = 0, dirty = true;
-  let colorMode = 'fail', selected = null, axisMax = 0.6;
+  let colorMode = 'ckpt', view = 'islands', vm = 0, selected = null, axisMax = 0.6;
   const scrub = $('#scrub'), count = $('#count');
+  const mono = (px, w = 400) => `${w} ${px}px "JetBrains Mono", ui-monospace, monospace`;
 
   function layout() {
     W = canvas.parentElement.clientWidth;
     dpr = Math.min(window.devicePixelRatio || 1, 2);
-    const pad = 14, laneH = 42, lanesTop = 14;
-    const lanesBottom = lanesTop + C * laneH;
-    const mapTop = lanesBottom + 26;
-    const mapH = W < 560 ? Math.round(W * 0.98) : Math.min(440, Math.round(W * 0.4));
+    const phone = W < 560, pad = 14, laneH = 42, lanesTop = 14;
+    const mapTop = lanesTop + C * laneH + 26;
+    const key = W >= 720 ? 'wide' : 'sq', pre = key === 'wide' ? 'w' : '';
+    const ext = D.clusters.stats.extent[key];
+    const mx0 = pad + 8, mx1 = W - pad - 8, pw = mx1 - mx0;
+    const need = Math.round(pw * (ext[1] / ext[0]));
+    const mapH = clamp(need + (phone ? 96 : 84), phone ? 300 : 280, 620);
     H = mapTop + mapH + 12;
     canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
     canvas.style.height = H + 'px';
-    const mx0 = pad + 6, mx1 = W - pad - 6, my0 = mapTop + 34, my1 = mapTop + mapH - 10;
-    L = { pad, laneH, lanesTop, mapTop, mapH, mx0, mx1, my0, my1, bx0: pad, bx1: W - pad };
+    const my0 = mapTop + 40, my1 = mapTop + mapH - 12, ph = my1 - my0;
+    L = { pad, laneH, lanesTop, mapTop, mapH, mx0, mx1, my0, my1, bx0: pad, bx1: W - pad, key, pre, phone };
     const maxFinal = Math.max(...NAMES.map((_, c) => D._cum[c][N] / N));
     axisMax = Math.min(1, Math.ceil((maxFinal + 0.06) * 10) / 10);
-    // map geometry from the data, independent of replay time
-    const proj = (p) => [lerp(mx0 + 8, mx1 - 8, (p.x + 1) / 2), lerp(my0 + 8, my1 - 8, (p.y + 1) / 2)];
-    DOTS.forEach((d) => { [d.tx, d.ty] = proj(d.p); });
-    L.ell = D.clusters.clusters.map((cl) => {
-      const m = D.clusters.points.filter((p) => p.cluster === cl.id).map(proj);
-      const mx = m.reduce((a, q) => a + q[0], 0) / m.length, my = m.reduce((a, q) => a + q[1], 0) / m.length;
-      const sx = Math.sqrt(m.reduce((a, q) => a + (q[0] - mx) ** 2, 0) / m.length), sy = Math.sqrt(m.reduce((a, q) => a + (q[1] - my) ** 2, 0) / m.length);
-      return { cl, x: mx, y: my, rx: Math.max(18, sx * 1.7 + 8), ry: Math.max(15, sy * 1.7 + 8) };
+    const sc = Math.min(pw / 2 / ext[0], ph / 2 / ext[1]), cx = (mx0 + mx1) / 2, cy = (my0 + my1) / 2 + 6;
+    L.sc = sc;
+    DOTS.forEach((d) => {
+      d.ix = cx + d.p[pre + 'x'] * sc; d.iy = cy + d.p[pre + 'y'] * sc;
+      d.rx = cx + d.p.rx * (pw / 2); d.ry = cy + d.p.ry * (ph / 2);
     });
-    // label positions: start above each ellipse, then push overlapping labels apart so every name stays readable
-    const lpx = W < 560 ? 9 : 10.5, minY = mapTop + 22, maxY = my1 - 6;
-    L.lab = L.ell.map((e) => ({ e, w: e.cl.name.length * lpx * 0.62 + 6, x: clamp(e.x, 52, W - 52), y: clamp(e.y - e.ry - 14, minY, maxY) }));
-    for (let it = 0; it < 60; it++) {
-      let moved = false;
-      for (let i = 0; i < L.lab.length; i++) for (let j = i + 1; j < L.lab.length; j++) {
-        const a = L.lab[i], b = L.lab[j], ox = (a.w + b.w) / 2 - Math.abs(a.x - b.x), oy = 2 * lpx + 8 - Math.abs(a.y - b.y);
-        if (ox > 0 && oy > 0) {
-          const up = a.y <= b.y ? -1 : 1, d = oy / 2 + 0.5;
-          a.y = clamp(a.y + up * d, minY, maxY); b.y = clamp(b.y - up * d, minY, maxY); moved = true;
-        }
+    L.subs = D.clusters.clusters.map((c) => ({ c, x: cx + c[pre + 'x'] * sc, y: cy + c[pre + 'y'] * sc, r: c[pre + 'r'] * sc }));
+    L.isl = D.clusters.islands.map((i) => ({ i, x: cx + i[pre + 'x'] * sc, y: cy + i[pre + 'y'] * sc, r: i[pre + 'r'] * sc }));
+    // island labels: try above and below each island, keep the spot that covers the least of any other island or label
+    const lpx = phone ? 9.5 : 10.5, minY = mapTop + 20, maxY = my1 + 8, lh = 2 * lpx + 6;
+    const placed = [];
+    const hit = (x, y, w, o) => { // how far the label box pokes into another island's circle
+      const dx = Math.max(Math.abs(o.x - x) - w / 2, 0), dy = Math.max(Math.abs(o.y - (y - lpx + lh / 2)) - lh / 2, 0);
+      return Math.max(0, o.r - Math.hypot(dx, dy));
+    };
+    L.lab = [];
+    [...L.isl].sort((p, q) => q.i.n - p.i.n).forEach((o) => {
+      const w = (MODE_LABEL[o.i.mode].length + 5) * lpx * 0.64 + 8, x = clamp(o.x, w / 2 + 4, W - w / 2 - 4);
+      let best = null;
+      for (const y0 of [o.y - o.r - 10, o.y + o.r + lpx + 8, o.y - o.r + 4]) {
+        const y = clamp(y0, minY, maxY);
+        let cost = Math.abs(y - y0) * 3;
+        for (const q of L.isl) if (q !== o) cost += hit(x, y, w, q) * 2;
+        for (const q of placed) if (Math.abs(q.x - x) < (q.w + w) / 2 && Math.abs(q.y - y) < lh) cost += 60;
+        if (!best || cost < best.cost - 0.5) best = { y, cost };
       }
-      if (!moved) break;
-    }
+      const lb = { o, w, x, y: best.y }; placed.push(lb); L.lab.push(lb);
+    });
     dirty = true;
   }
 
@@ -122,9 +144,32 @@ const Stage = (() => {
   }
 
   function dotColor(d) {
-    if (colorMode === 'tag') return MODE_COLOR[d.s.m] || '#ff7a3d';
-    if (colorMode === 'ckpt') return CK_COLOR[d.c % CK_COLOR.length];
-    return '#ff7a3d';
+    if (colorMode === 'tag' || view === 'raw') return MODE_COLOR[d.s.m] || '#ff7a3d';
+    return CK_TINT[d.c % CK_TINT.length];
+  }
+
+  function shape(c, x, y, r) {
+    switch (SHAPES[c % SHAPES.length]) {
+      case 'square': ctx.rect(x - r * 0.88, y - r * 0.88, r * 1.76, r * 1.76); break;
+      case 'triangle': ctx.moveTo(x, y - r * 1.15); ctx.lineTo(x + r * 1.05, y + r * 0.8); ctx.lineTo(x - r * 1.05, y + r * 0.8); ctx.closePath(); break;
+      case 'diamond': ctx.moveTo(x, y - r * 1.2); ctx.lineTo(x + r * 1.2, y); ctx.lineTo(x, y + r * 1.2); ctx.lineTo(x - r * 1.2, y); ctx.closePath(); break;
+      default: ctx.moveTo(x + r, y); ctx.arc(x, y, r, 0, 7);
+    }
+  }
+
+  // a dot's path: leaves the head of its lane, drops below the lanes, then settles into its place on the map
+  function pos(d, f) {
+    const e = easeIO(clamp(f));
+    const x0 = barX(D._cum[d.c][d.k + 1] / (d.k + 1)), y0 = L.lanesTop + d.c * L.laneH + 22;
+    const tx = lerp(d.ix, d.rx, vm), ty = lerp(d.iy, d.ry, vm);
+    const c1x = lerp(x0, tx, 0.3), c1y = L.mapTop - 2;
+    const u = 1 - e;
+    return [u * u * x0 + 2 * u * e * c1x + e * e * tx, u * u * y0 + 2 * u * e * c1y + e * e * ty];
+  }
+
+  function halo(txt, x, y, a) {
+    ctx.lineJoin = 'round'; ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(10,11,14,.92)'; ctx.strokeText(txt, x, y);
+    ctx.fillStyle = a; ctx.fillText(txt, x, y);
   }
 
   function draw() {
@@ -132,76 +177,119 @@ const Stage = (() => {
     const k = Math.floor(clamp(t, 0, N));
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, W, H);
-    const mono = (px, w = 400) => `${w} ${px}px "JetBrains Mono", ui-monospace, monospace`;
     const rates = NAMES.map((_, c) => rateAt(c, t));
     const lead = rates.indexOf(Math.max(...rates));
-    // lanes
+    // map frame and islands
+    ctx.textAlign = 'left'; ctx.font = mono(10.5, 500); ctx.fillStyle = 'rgba(237,236,230,.46)';
+    ctx.fillText(view === 'islands' ? (L.phone ? 'FAILURE MAP · one island per mode' : 'FAILURE MAP · one island per failure mode, mode set by the rule detectors') : (L.phone ? 'RAW t-SNE · no grouping' : 'RAW PROJECTION · t-SNE of the failure embeddings, no grouping'), L.pad, L.mapTop + 8);
+    ctx.strokeStyle = 'rgba(237,236,230,.09)'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(L.pad, L.mapTop - 8); ctx.lineTo(W - L.pad, L.mapTop - 8); ctx.stroke();
+    const landedSub = new Map(), landedIsl = new Map();
+    for (const d of DOTS) if (t >= d.spawn + FLIGHT) { landedSub.set(d.p.cluster, (landedSub.get(d.p.cluster) || 0) + 1); landedIsl.set(d.p.mode, (landedIsl.get(d.p.mode) || 0) + 1); }
+    const islA = 1 - vm;
+    if (islA > 0.02) {
+      ctx.globalAlpha = islA;
+      L.isl.forEach((o) => {
+        const n = landedIsl.get(o.i.mode) || 0, a = clamp(n / Math.max(4, o.i.n * 0.5));
+        ctx.strokeStyle = MODE_COLOR[o.i.mode]; ctx.globalAlpha = islA * (0.22 + 0.5 * a); ctx.lineWidth = 1.2; ctx.setLineDash([4, 4]);
+        ctx.beginPath(); ctx.arc(o.x, o.y, o.r, 0, 7); ctx.stroke(); ctx.setLineDash([]);
+      });
+      ctx.globalAlpha = islA * 0.9;
+      L.subs.forEach((s) => {
+        const n = landedSub.get(s.c.id) || 0, a = clamp(n / Math.max(4, s.c.size * 0.5));
+        ctx.strokeStyle = `rgba(237,236,230,${0.05 + 0.12 * a})`; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, 7); ctx.stroke();
+      });
+      ctx.globalAlpha = 1;
+    }
+    // dots, drawn before the lanes so the lanes stay on top
+    const rad = L.phone ? 2.3 : 2.9;
+    const trail = [];
+    for (const d of DOTS) {
+      if (t < d.spawn) continue;
+      const f = (t - d.spawn) / FLIGHT, [x, y] = pos(d, f);
+      d._x = x; d._y = y;
+      const fl = f < 1;
+      if (fl) trail.push(d);
+      ctx.globalAlpha = fl ? 1 : 0.86;
+      ctx.fillStyle = dotColor(d);
+      ctx.beginPath(); shape(d.c, x, y, fl ? rad * 1.3 : rad); ctx.fill();
+      if (!fl && d.p.mislabelled) { ctx.globalAlpha = d.ringA; ctx.strokeStyle = '#edece6'; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(x, y, rad + 2.5, 0, 7); ctx.stroke(); }
+      if (!fl && selected && selected.c === d.c && selected.id === d.id) {
+        ctx.globalAlpha = 1; ctx.strokeStyle = '#d7ff3f'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(x, y, rad + 5, 0, 7); ctx.stroke();
+      }
+    }
+    for (const d of trail) { // faint trail behind each dot in flight
+      const f = (t - d.spawn) / FLIGHT;
+      for (let j = 1; j <= 4; j++) {
+        const ff = f - j * 0.05; if (ff <= 0) break;
+        const [x, y] = pos(d, ff);
+        ctx.globalAlpha = 0.28 / j; ctx.fillStyle = dotColor(d);
+        ctx.beginPath(); ctx.arc(x, y, rad * (1.25 - j * 0.15), 0, 7); ctx.fill();
+      }
+    }
+    ctx.globalAlpha = 1;
+    // island labels with live counts
+    if (islA > 0.02) {
+      ctx.textAlign = 'center';
+      L.lab.forEach((lb) => {
+        const o = lb.o, n = landedIsl.get(o.i.mode) || 0, px = L.phone ? 9.5 : 10.5;
+        ctx.globalAlpha = islA; ctx.font = mono(px, 600);
+        halo(MODE_LABEL[o.i.mode].toUpperCase(), lb.x, lb.y, MODE_COLOR[o.i.mode]);
+        ctx.font = mono(px, 500);
+        halo(`${n} of ${o.i.n}`, lb.x, lb.y + px + 3, 'rgba(237,236,230,.7)');
+      });
+      if (!L.phone) {
+        ctx.font = mono(9.5, 400);
+        L.subs.forEach((s) => {
+          const n = landedSub.get(s.c.id) || 0;
+          if (s.r * 2 < 78 || n < s.c.size * 0.6) return;
+          ctx.globalAlpha = islA * 0.9;
+          halo(s.c.name.length > 26 ? s.c.name.slice(0, 25) + '…' : s.c.name, s.x, s.y + s.r + 11, 'rgba(237,236,230,.62)');
+        });
+      }
+      ctx.globalAlpha = 1; ctx.textAlign = 'left';
+    }
+    if (vm > 0.02) { // legend for the raw view: dots are coloured by detector mode
+      ctx.globalAlpha = vm; ctx.font = mono(10, 500); ctx.textAlign = 'left';
+      let lx = L.pad, ly = L.my1 + 2;
+      MODES.forEach((m) => {
+        const w = MODE_LABEL[m].length * 6.4 + 22;
+        if (lx + w > W - L.pad) { lx = L.pad; ly -= 14; }
+        ctx.fillStyle = MODE_COLOR[m]; ctx.beginPath(); ctx.arc(lx + 4, ly - 3, 3.2, 0, 7); ctx.fill();
+        ctx.fillStyle = 'rgba(237,236,230,.7)'; ctx.fillText(MODE_LABEL[m], lx + 12, ly); lx += w;
+      });
+      ctx.globalAlpha = 1;
+    }
+    // lanes (on top of the dots; text gets a halo so a passing dot never hides a number)
     NAMES.forEach((name, c) => {
       const y0 = L.lanesTop + c * L.laneH, isLead = c === lead && t > 3;
-      ctx.font = mono(11, isLead ? 600 : 400);
-      ctx.fillStyle = isLead ? '#edece6' : 'rgba(237,236,230,.62)'; ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
-      ctx.fillText(name, L.bx0, y0 + 11);
+      ctx.font = mono(11, isLead ? 600 : 400); ctx.textBaseline = 'alphabetic';
+      ctx.fillStyle = CK_TINT[c % CK_TINT.length]; ctx.beginPath(); shape(c, L.bx0 + 5, y0 + 7.5, 4.2); ctx.fill();
+      ctx.textAlign = 'left';
+      halo(name, L.bx0 + 15, y0 + 11, isLead ? '#edece6' : 'rgba(237,236,230,.62)');
       const w = k ? D._win[c][k] : 0;
-      ctx.textAlign = 'right'; ctx.fillStyle = isLead ? '#d7ff3f' : 'rgba(237,236,230,.62)';
-      ctx.fillText(`${pct(rates[c])} pass · win ${w.toFixed(2)}`, L.bx1, y0 + 11);
+      ctx.textAlign = 'right';
+      halo(`${pct(rates[c])} pass · win ${w.toFixed(2)}`, L.bx1, y0 + 11, isLead ? '#d7ff3f' : 'rgba(237,236,230,.62)');
       ctx.fillStyle = 'rgba(237,236,230,.07)';
       rr(L.bx0, y0 + 18, L.bx1 - L.bx0, 8, 4); ctx.fill();
       const ex = barX(rates[c]);
       ctx.fillStyle = isLead ? '#d7ff3f' : 'rgba(237,236,230,.38)';
       rr(L.bx0, y0 + 18, Math.max(8, ex - L.bx0), 8, 4); ctx.fill();
-      // interval whisker (Wilson, on what has been replayed so far)
-      if (k >= 4) {
+      if (k >= 4) { // Wilson interval on what has been replayed so far
         const [lo, hi] = wilson(D._cum[c][k], k);
         ctx.strokeStyle = 'rgba(237,236,230,.8)'; ctx.lineWidth = 1; ctx.beginPath();
         ctx.moveTo(barX(lo), y0 + 22); ctx.lineTo(barX(hi), y0 + 22);
         ctx.moveTo(barX(lo), y0 + 19); ctx.lineTo(barX(lo), y0 + 25); ctx.moveTo(barX(hi), y0 + 19); ctx.lineTo(barX(hi), y0 + 25); ctx.stroke();
       }
-      // verdict of the prompt being replayed right now
-      if (k < N && t > 0) {
+      if (k < N && t > 0) { // verdict of the prompt being replayed right now
         const s = SAMPLE.get(c + '|' + ORDER[k]), fr = t - k;
         ctx.globalAlpha = 1 - fr; ctx.fillStyle = s.p ? '#d7ff3f' : '#ff7a3d';
         ctx.beginPath(); ctx.arc(Math.min(ex + 2, L.bx1 - 3), y0 + 22, 3.5, 0, 7); ctx.fill(); ctx.globalAlpha = 1;
       }
     });
-    // map frame
-    ctx.textAlign = 'left'; ctx.font = mono(10.5, 500); ctx.fillStyle = 'rgba(237,236,230,.46)';
-    ctx.fillText('FAILURE MAP · t-SNE of embedded failing answers', L.pad, L.mapTop + 8);
-    ctx.strokeStyle = 'rgba(237,236,230,.09)'; ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.moveTo(L.pad, L.mapTop - 8); ctx.lineTo(W - L.pad, L.mapTop - 8); ctx.stroke();
-    // landed counts per cluster
-    const landed = new Map();
-    for (const d of DOTS) if (t >= d.spawn + FLIGHT) landed.set(d.p.cluster, (landed.get(d.p.cluster) || 0) + 1);
-    L.ell.forEach((e, k) => {
-      const n = landed.get(e.cl.id) || 0, a = clamp(n / Math.max(4, e.cl.size * 0.5));
-      ctx.strokeStyle = `rgba(255,122,61,${0.18 + 0.45 * a})`; ctx.setLineDash([3, 4]); ctx.lineWidth = 1;
-      ctx.beginPath(); ctx.ellipse(e.x, e.y, e.rx, e.ry, 0, 0, 7); ctx.stroke(); ctx.setLineDash([]);
-      const px = W < 560 ? 9 : 10.5;
-      ctx.font = mono(px, 500); ctx.textAlign = 'center';
-      const lx = L.lab[k].x, ly = L.lab[k].y;
-      ctx.lineJoin = 'round'; ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(11,12,15,.92)'; ctx.strokeText(e.cl.name, lx, ly); ctx.strokeText(String(n), lx, ly + px + 3);
-      ctx.fillStyle = `rgba(237,236,230,${0.45 + 0.4 * a})`; ctx.fillText(e.cl.name, lx, ly);
-      ctx.fillStyle = `rgba(255,122,61,${0.55 + 0.45 * a})`; ctx.font = mono(px + 1, 600); ctx.fillText(String(n), lx, ly + px + 3);
-    });
     ctx.textAlign = 'left';
-    // dots
-    const rad = W < 560 ? 2.6 : 3;
-    for (const d of DOTS) {
-      if (t < d.spawn) continue;
-      const f = clamp((t - d.spawn) / FLIGHT), e = easeIO(f);
-      const y0 = L.lanesTop + d.c * L.laneH + 22, x0 = barX(D._cum[d.c][d.k + 1] / (d.k + 1));
-      let x = lerp(x0, d.tx, e), y = lerp(y0, d.ty, e);
-      const arc = Math.sin(f * Math.PI) * 26 * (d.c % 2 ? 1 : -1);
-      x += arc * (1 - e) ; // gentle drift
-      ctx.globalAlpha = f < 1 ? 0.95 : 0.82;
-      ctx.fillStyle = dotColor(d);
-      ctx.beginPath(); ctx.arc(x, y, f < 1 ? rad * 1.35 : rad, 0, 7); ctx.fill();
-      if (f >= 1 && d.p.mislabelled) { ctx.globalAlpha = 1; ctx.strokeStyle = '#edece6'; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.arc(x, y, rad + 2.4, 0, 7); ctx.stroke(); }
-      if (selected && selected.c === d.c && selected.id === d.id && f >= 1) {
-        ctx.globalAlpha = 1; ctx.strokeStyle = '#d7ff3f'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(x, y, rad + 5, 0, 7); ctx.stroke();
-      }
-    }
-    ctx.globalAlpha = 1;
-    if (!landed.size && t < 1) {
+    if (!landedIsl.size && t < 1) {
       ctx.font = mono(12); ctx.fillStyle = 'rgba(237,236,230,.5)'; ctx.textAlign = 'center';
       ctx.fillText('press play: failing samples will land here', W / 2, (L.my0 + L.my1) / 2); ctx.textAlign = 'left';
     }
@@ -220,6 +308,8 @@ const Stage = (() => {
       if (t >= N + FLIGHT) { t = N + FLIGHT; setPlaying(false); }
       dirty = true;
     }
+    const goal = view === 'raw' ? 1 : 0;
+    if (vm !== goal) { vm = reduced ? goal : (goal > vm ? Math.min(goal, vm + dt * 1.8) : Math.max(goal, vm - dt * 1.8)); dirty = true; }
     if (dirty) { draw(); dirty = false; }
   }
 
@@ -233,12 +323,18 @@ const Stage = (() => {
     let best = null, bd = 22 * 22;
     for (const d of DOTS) {
       if (t < d.spawn + FLIGHT) continue;
-      const dd = (d.tx - x) ** 2 + (d.ty - y) ** 2;
+      const dd = (d._x - x) ** 2 + (d._y - y) ** 2;
       if (dd < bd) { bd = dd; best = d; }
     }
     if (best) return { dot: best };
-    for (const e of L.ell) if (((x - e.x) / (e.rx * 1.2)) ** 2 + ((y - e.y) / (e.ry * 1.2)) ** 2 <= 1) return { cluster: e.cl };
+    if (view === 'raw') return null;
+    for (const s of L.subs) if (Math.hypot(s.x - x, s.y - y) <= s.r + 3) return { cluster: s.c };
+    for (const o of L.isl) if (Math.hypot(o.x - x, o.y - y) <= o.r + 3) return { island: o.i };
     return null;
+  }
+
+  function setToggle(sel, attr, val) {
+    document.querySelectorAll(sel).forEach((o) => { const on = o.dataset[attr] === val; o.classList.toggle('on', on); o.setAttribute('aria-checked', on); });
   }
 
   function init() {
@@ -254,27 +350,28 @@ const Stage = (() => {
     requestAnimationFrame((n) => { last = n; frame(n); });
     document.fonts && document.fonts.ready.then(() => { dirty = true; });
     $('#play').addEventListener('click', () => { if (t >= N + FLIGHT) t = 0; setPlaying(!playing); });
-    $('#replay').addEventListener('click', () => { t = 0; selected = null; setPlaying(!reduced || true); dirty = true; });
+    $('#replay').addEventListener('click', () => { t = 0; selected = null; setPlaying(true); dirty = true; });
     scrub.max = N;
     scrub.addEventListener('input', () => { t = Math.min(+scrub.value, N); setPlaying(false); dirty = true; });
-    document.querySelectorAll('[data-speed]').forEach((b) => b.addEventListener('click', () => {
-      speed = +b.dataset.speed;
-      document.querySelectorAll('[data-speed]').forEach((o) => { const on = o === b; o.classList.toggle('on', on); o.setAttribute('aria-checked', on); });
-    }));
-    document.querySelectorAll('[data-color]').forEach((b) => b.addEventListener('click', () => {
-      colorMode = b.dataset.color;
-      document.querySelectorAll('[data-color]').forEach((o) => { const on = o === b; o.classList.toggle('on', on); o.setAttribute('aria-checked', on); });
-      dirty = true;
-    }));
+    document.querySelectorAll('[data-speed]').forEach((b) => b.addEventListener('click', () => { speed = +b.dataset.speed; setToggle('[data-speed]', 'speed', b.dataset.speed); }));
+    document.querySelectorAll('[data-color]').forEach((b) => b.addEventListener('click', () => { colorMode = b.dataset.color; setToggle('[data-color]', 'color', colorMode); dirty = true; }));
+    document.querySelectorAll('[data-view]').forEach((b) => b.addEventListener('click', () => { view = b.dataset.view; setToggle('[data-view]', 'view', view); dirty = true; }));
     // a click is only fired for taps, not for scroll gestures, and it fires before anything opens over the canvas
     canvas.addEventListener('click', (e) => {
       const r = canvas.getBoundingClientRect(), hit = pick(e.clientX - r.left, e.clientY - r.top);
       if (!hit) { selected = null; dirty = true; return; }
       setPlaying(false);
       if (hit.dot) { selected = hit.dot; dirty = true; Drawer.openCluster(CLUSTERS.get(hit.dot.p.cluster), hit.dot.c + '|' + hit.dot.id); }
-      else Drawer.openCluster(hit.cluster);
+      else if (hit.cluster) Drawer.openCluster(hit.cluster);
+      else Drawer.openIsland(hit.island);
     });
-    window.__evalbench = { seek: (v) => { t = v; setPlaying(false); dirty = true; draw(); }, state: () => ({ t, playing, N, FLIGHT }), pickAt: (x, y) => pick(x, y), dot: (i) => (DOTS[i] ? { x: DOTS[i].tx, y: DOTS[i].ty } : null) };
+    window.__evalbench = {
+      seek: (v) => { t = v; setPlaying(false); dirty = true; draw(); }, state: () => ({ t, playing, N, FLIGHT, view, vm }),
+      view: (v) => { view = v; vm = v === 'raw' ? 1 : 0; dirty = true; draw(); setToggle('[data-view]', 'view', v); },
+      pickAt: (x, y) => pick(x, y), dot: (i) => (DOTS[i] && DOTS[i]._x != null ? { x: DOTS[i]._x, y: DOTS[i]._y } : null),
+      fps: () => new Promise((res) => { let n = 0; const s = performance.now(); const f = () => { n++; if (performance.now() - s < 1000) requestAnimationFrame(f); else res(n); }; requestAnimationFrame(f); }),
+      play: (v) => { setPlaying(v); },
+    };
   }
   return { init, redraw: () => { dirty = true; } };
 })();
@@ -311,9 +408,10 @@ const Drawer = (() => {
     const li = el('div', 'card' + (expand ? ' open' : ''));
     const head = el('button'); head.type = 'button'; head.setAttribute('aria-expanded', !!expand);
     const tags = el('div', 'tags');
-    tags.append(el('span', '', NAMES[c]), el('span', '', it.task));
+    const ckt = el('span', 'ck'); ckt.append(glyph(c, 11), document.createTextNode(NAMES[c]));
+    tags.append(ckt, el('span', '', it.task));
     tags.append(el('span', s.p ? 'ok' : 'mode', s.p ? 'pass' : MODE_LABEL[s.m] || 'fail'));
-    if (entry.ring) tags.append(el('span', 'ring', `tag ≠ cluster (${entry.ring})`));
+    if (entry.ring) tags.append(el('span', 'ring', 'embedding looks like another mode'));
     head.append(tags, el('div', 'pv', it.prompt));
     const more = el('div', 'more');
     const fill = () => {
@@ -348,12 +446,12 @@ const Drawer = (() => {
     filt.replaceChildren();
     const cks = [...new Set(state.entries.map((e) => e.c))];
     filt.hidden = cks.length < 2;
-    const mk = (label, val) => {
-      const b = el('button', '', label); b.type = 'button'; b.setAttribute('aria-pressed', state.ck === val);
+    const mk = (label, val, gc) => {
+      const b = el('button', '', label); b.type = 'button'; if (gc != null) b.prepend(glyph(gc, 11), ' '); b.setAttribute('aria-pressed', state.ck === val);
       b.addEventListener('click', () => { state.ck = val; filt.querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', x === b)); render(null); });
       filt.append(b);
     };
-    mk('all', null); cks.forEach((c) => mk(`${NAMES[c]} (${state.entries.filter((e) => e.c === c).length})`, c));
+    mk('all', null); cks.forEach((c) => mk(`${NAMES[c]} (${state.entries.filter((e) => e.c === c).length})`, c, c));
   }
 
   function openList({ kicker, title, meta, entries, expand }) {
@@ -362,15 +460,24 @@ const Drawer = (() => {
     setFilters(); render(expand || null); show();
   }
 
-  function openCluster(cl, expandKey) {
-    const pts = D.clusters.points.filter((p) => p.cluster === cl.id);
+  function entriesFor(pts) {
     const entries = pts.map((p) => ({ c: NAMES.indexOf(p.ckpt), s: SAMPLE.get(NAMES.indexOf(p.ckpt) + '|' + p.item), ring: p.mislabelled ? MODE_LABEL[p.mode] : null }));
     entries.sort((a, b) => (b.ring ? 1 : 0) - (a.ring ? 1 : 0) || a.c - b.c);
-    const votes = Object.entries(cl.votes).map(([m, n]) => `${m} ${n}`).join(', ');
+    return entries;
+  }
+  function openCluster(cl, expandKey) {
+    const ring = cl.disagree ? ` · ${cl.disagree} ringed (embedding looks like another mode)` : '';
     openList({
-      kicker: 'Failure cluster', title: cl.name,
-      meta: `${cl.size} samples · purity ${cl.purity.toFixed(2)} · tags: ${votes}${cl.terms.length ? ' · terms: ' + cl.terms.join(', ') : ''}`,
-      entries, expand: expandKey,
+      kicker: `Cluster inside ${MODE_LABEL[cl.label]}`, title: cl.name,
+      meta: `${cl.size} samples · mostly ${cl.task} (${Math.round(cl.task_share * 100)}%) · mode set by the rule detectors${ring}`,
+      entries: entriesFor(D.clusters.points.filter((p) => p.cluster === cl.id)), expand: expandKey,
+    });
+  }
+  function openIsland(isl) {
+    openList({
+      kicker: 'Failure mode', title: MODE_LABEL[isl.mode],
+      meta: `${isl.n} failing samples · ${isl.subs.length} clusters inside · mode set by the rule detectors · ${isl.disagree} ringed`,
+      entries: entriesFor(D.clusters.points.filter((p) => p.mode === isl.mode)),
     });
   }
 
@@ -400,31 +507,53 @@ const Drawer = (() => {
       else if (!e.shiftKey && document.activeElement === lastEl) { e.preventDefault(); first.focus(); }
     });
   }
-  return { init, openCluster, openSamples, close, isOpen: () => open };
+  return { init, openCluster, openIsland, openSamples, close, isOpen: () => open };
 })();
 
 /* ------------------------------------------------------------------ panels */
 const letter = (i) => String.fromCharCode(65 + i);
 
+function devText() {
+  const d = Object.entries(D.meta.devices || {}).filter(([k]) => !k.startsWith('judge:')).map(([, v]) => `${v.device} ${v.dtype}`);
+  const u = [...new Set(d)];
+  return u.length ? u.join(' / ') : 'device not recorded';
+}
+
 function renderBanner() {
   const m = D.meta;
   $('#banner-text').replaceChildren(
-    ...[['Recorded run', true], [` · ${m.created} · ${m.n_items} prompts × ${C} checkpoints · suite ${m.suite_hash} · judge ${m.judge.replace('local:', '')}${m.commit ? ' · commit ' + m.commit : ''}`, false]]
+    ...[['Recorded run', true], [` · ${m.created} · ${m.n_items} prompts × ${C} checkpoints · suite v${m.suite_version} ${m.suite_hash} · judge ${m.judge.replace('local:', '')} · ${devText()}${m.commit ? ' · code ' + m.commit : ''}`, false]]
       .map(([t, b]) => (b ? el('b', '', t) : document.createTextNode(t))),
   );
 }
 
 function renderChips() {
-  const ul = $('#cluster-chips');
-  D.clusters.clusters.slice().sort((a, b) => b.size - a.size).forEach((cl) => {
-    const li = el('li'), b = el('button'); b.type = 'button';
-    b.append(el('span', '', cl.name), el('small', '', `n=${cl.size} · purity ${cl.purity.toFixed(2)}`));
-    b.addEventListener('click', () => Drawer.openCluster(cl));
-    li.append(b); ul.append(li);
+  const ul = $('#cluster-chips'), cl = D.clusters;
+  cl.islands.forEach((isl) => {
+    const g = el('li', 'grp'), dot = el('i'); dot.style.background = MODE_COLOR[isl.mode];
+    const gb = el('button', 'grpbtn'); gb.type = 'button'; gb.append(dot, `${MODE_LABEL[isl.mode]} · ${isl.n}`);
+    gb.addEventListener('click', () => Drawer.openIsland(isl)); g.append(gb); ul.append(g);
+    cl.clusters.filter((c) => isl.subs.includes(c.id)).sort((a, b) => b.size - a.size).forEach((c) => {
+      const li = el('li'), b = el('button'); b.type = 'button';
+      b.append(el('span', '', c.name), el('small', '', `n=${c.size}${c.disagree ? ' · ' + c.disagree + ' ringed' : ''}`));
+      b.addEventListener('click', () => Drawer.openCluster(c));
+      li.append(b); ul.append(li);
+    });
   });
-  const s = D.clusters.stats;
-  $('#cluster-stats').textContent = `${s.n_failures} failing samples, k=${s.k} chosen by silhouette (${s.silhouette}). Overall purity ${s.purity}; ${s.mislabelled} samples carry a tag that disagrees with their cluster. ` +
-    `Adjusted mutual information of clusters vs failure tag ${s.ami_vs_mode}, vs task ${s.ami_vs_task}; tag vs task alone ${s.ami_mode_vs_task}.`;
+  const s = cl.stats, box = $('#cluster-stats');
+  box.replaceChildren(el('p', 'note mono', `${s.n_failures} failing samples. The mode of each sample comes from deterministic detectors, never from the embedding. ` +
+    `The embedding is compared with those modes below (k chosen by silhouette); ringed dots are samples whose mode differs from the label of their embedding cluster (${s.mislabelled}). ` +
+    `Inside each island the samples are grouped by embedding and named by their top task and distinctive words. The raw view shows the unsupervised projection with no grouping.`));
+  const tbl = el('table', 'rep mono'), head = el('tr');
+  ['representation', 'k', 'silhouette', 'purity', 'AMI vs mode', 'AMI vs task', 'ringed'].forEach((h) => head.append(el('th', '', h)));
+  tbl.append(head);
+  const nm = { plain: 'plain embedding', task_centred: 'task-centred embedding', failure_text: 'failure description + centred embedding' };
+  Object.entries(s.representations).forEach(([k, r]) => {
+    const tr = el('tr', k === s.chosen ? 'used' : '');
+    [nm[k] + (k === s.chosen ? ' (used)' : ''), r.k, r.silhouette.toFixed(3), r.purity.toFixed(3), r.ami_vs_mode.toFixed(3), r.ami_vs_task.toFixed(3), r.mislabelled].forEach((v) => tr.append(el('td', '', String(v))));
+    tbl.append(tr);
+  });
+  const sc = el('div', 'scroll'); sc.append(tbl); box.append(sc);
 }
 
 function heat(a) { return `rgba(215,255,63,${(0.06 + 0.5 * a).toFixed(3)})`; }
@@ -499,6 +628,12 @@ function renderModes() {
   const key = el('div', 'mkey');
   MODES.forEach((m) => { const s = el('span'); const i = el('i'); i.style.background = MODE_COLOR[m]; s.append(i, MODE_LABEL[m]); key.append(s); });
   box.append(key);
+  const cap = D.meta.cap_hits;
+  if (cap) {
+    const p = el('p', 'note mono', 'Ran to the token cap, of which loops (counted as degenerate) and plain budget exhaustion: ' +
+      NAMES.map((n) => `${n} ${cap[n].hits}/${cap[n].n} (${cap[n].loops} loops, ${cap[n].budget_only} budget only, ${pct(cap[n].budget_rate)})`).join(' · ') + '.');
+    box.append(p);
+  }
 }
 
 function renderJudge() {
@@ -516,6 +651,21 @@ function renderJudge() {
     add('Choice flips when order swaps', pct(j.pairwise.flip_rate, 0), j.pairwise.flip_rate > 0.25 ? 'warn' : 'lime');
   }
   box.append(kv);
+  const jc = D.judge_comparison;
+  if (jc) {
+    const tbl = el('table', 'rep mono'), head = el('tr');
+    ['judge', 'acc vs exact', 'kappa', 'lexicon', 'pair acc (swap-avg)', 'flip rate'].forEach((h) => head.append(el('th', '', h)));
+    tbl.append(head);
+    Object.entries(jc.judges).forEach(([name, r]) => {
+      const tr = el('tr', name === jc.best_by_strict_kappa ? 'used' : '');
+      const cells = [name.replace('local:Qwen/', '') + (name === jc.best_by_strict_kappa ? ' (default)' : ''), r.strict ? pct(r.strict.accuracy, 1) : '–', r.strict ? r.strict.kappa.toFixed(2) : '–',
+        r.lexicon_agreement ? pct(r.lexicon_agreement.accuracy, 0) : '–', r.pairwise ? pct(r.pairwise.accuracy_swap_averaged, 0) : '–', r.pairwise ? pct(r.pairwise.flip_rate, 0) : '–'];
+      cells.forEach((v) => tr.append(el('td', '', v)));
+      tbl.append(tr);
+    });
+    const sc = el('div', 'scroll'); sc.append(tbl); box.append(sc);
+    box.append(el('p', 'note mono', 'Default judge = higher kappa against exact-match labels (chosen before the comparison was run).'));
+  }
   const self = D.meta.checkpoints.some((c) => D.meta.judge.includes(c.model));
   const k = j.strict ? j.strict.kappa : 0;
   box.append(el('p', 'verdict', (k >= 0.6 ? 'Reasonable agreement on this task. ' : k >= 0.4 ? 'Moderate agreement. ' : 'Weak agreement: a judge this small is not trusted to grade on its own. ') +
@@ -581,7 +731,7 @@ function renderTry() {
     e.preventDefault();
     const cks = [...box.querySelectorAll('input:checked')].map((x) => x.value), prompt = $('#try-prompt').value.trim(), out = $('#try-out'), go = $('#try-go');
     if (!prompt || !cks.length) return;
-    go.disabled = true; go.textContent = 'Running'; out.replaceChildren(el('p', 'note mono', 'Generating on CPU. The first call loads each model.'));
+    go.disabled = true; go.textContent = 'Running'; out.replaceChildren(el('p', 'note mono', 'Generating locally. The first call loads each model.'));
     try {
       const r = await fetch('api/try', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt, checkpoints: cks }) });
       if (!r.ok) throw new Error(`server said ${r.status}`);

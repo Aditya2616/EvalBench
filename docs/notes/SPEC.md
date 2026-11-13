@@ -1,5 +1,12 @@
 # EvalBench spec
 
+> **Status.** This is the design written before the build. Where the build differs, the README and the code are right:
+> the suite has 408 prompts (version 2.0, the 120-prompt pilot was too small for useful intervals); generation and judging run on
+> CUDA in float16 when available (CPU float32 otherwise), one device and dtype per run; clustering uses KMeans (HDBSCAN was not used)
+> on three compared representations, with islands set by the deterministic detectors; the judge interface is `p_yes` / `p_first`
+> over batches with an on-disk call cache; runs are stored as per-checkpoint JSONL plus `run.json`, not parquet; and the figures
+> quoted here (120 items, 96 tokens, an hour of CPU) are plan numbers, not results.
+
 Repo `EvalBench`, MIT, port 8101. Promise from the portfolio: run one prompt suite across model checkpoints, score with rubric judging and exact match, cluster failures into modes (hallucination, format breaks, over-refusal), so each fine-tuning cycle targets what failed.
 
 ## 1. Concepts
