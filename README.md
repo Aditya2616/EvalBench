@@ -3,6 +3,8 @@
 [![CI](https://github.com/Aditya2616/EvalBench/actions/workflows/ci.yml/badge.svg)](https://github.com/Aditya2616/EvalBench/actions/workflows/ci.yml)
 [![Licence: MIT](https://img.shields.io/badge/licence-MIT-blue.svg)](LICENSE)
 
+By [Aditya Jain](https://adityajain16.vercel.app) and [Sneha Singh](https://github.com/snehasingh2608).
+
 An evaluation harness that finds where a model fails, not just how often.
 
 It runs one prompt suite across several model checkpoints, scores every output (exact match and rule checks first, a small rubric judge only where no rule exists), assigns each failure a mode with deterministic detectors (hallucination, format break, over-refusal, wrong answer, degenerate output), then embeds the failing answers, clusters them, and shows how well the clusters line up with the modes. The point is to make the next fine-tuning cycle target something specific. A pass-rate change does not say what to fix next; this harness is built to answer that.
@@ -227,4 +229,4 @@ EvalBench is a small experiment next to mature projects that do evaluation well:
 
 Code: MIT, Aditya Jain. Models (all Apache-2.0): SmolLM2 by Hugging Face, Qwen2.5 by Alibaba, all-MiniLM-L6-v2 by sentence-transformers. Data: GSM8K (MIT), MMLU (MIT), IFEval (Apache-2.0), TruthfulQA (Apache-2.0), XSTest (CC-BY-4.0), plus items I wrote. No model weights are committed.
 
-Built by [Aditya Jain](https://adityajain16.vercel.app).
+Built by [Aditya Jain](https://adityajain16.vercel.app) and [Sneha Singh](https://github.com/snehasingh2608).
