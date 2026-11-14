@@ -229,4 +229,9 @@ EvalBench is a small experiment next to mature projects that do evaluation well:
 
 Code: MIT, Aditya Jain. Models (all Apache-2.0): SmolLM2 by Hugging Face, Qwen2.5 by Alibaba, all-MiniLM-L6-v2 by sentence-transformers. Data: GSM8K (MIT), MMLU (MIT), IFEval (Apache-2.0), TruthfulQA (Apache-2.0), XSTest (CC-BY-4.0), plus items I wrote. No model weights are committed.
 
+## Authors
+
+- [Aditya Jain](https://github.com/Aditya2616)
+- [Sneha Singh](https://github.com/snehasingh2608)
+
 Built by [Aditya Jain](https://adityajain16.vercel.app) and [Sneha Singh](https://github.com/snehasingh2608).
